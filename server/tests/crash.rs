@@ -249,5 +249,9 @@ async fn kill9_during_load() {
     }
     let (ok, out) = integrity(dir.path(), true);
     assert!(ok, "{out}");
+    // The mirror survived the kills too (no partial or stray files) once it has caught up.
+    assert!(srv.wait_mirror(&token), "mirror did not catch up");
+    let (ok, out) = integrity_opts(dir.path(), true, true);
+    assert!(ok, "mirror check after crashes: {out}");
     srv.stop();
 }

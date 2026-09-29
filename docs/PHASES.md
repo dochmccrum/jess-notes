@@ -7,8 +7,8 @@ Update the **Status** line and tick boxes as work lands. Each phase ends with: a
 |---|---|---|
 | 0 | Design doc | ✅ done (approved 2026-09-29) |
 | 1 | core + server + sync protocol + blob store/channel + simulation suite (no UI) | ✅ done |
-| 2 | projection, import/export engine, server mirror + git | ⏳ next |
-| 3 | web app + Dockerfile + DEPLOY.md | ☐ |
+| 2 | projection, import/export engine, server mirror + git | ✅ done |
+| 3 | web app + Dockerfile + DEPLOY.md | ⏳ next |
 | 4 | images & PDFs in the UI | ☐ |
 | 5 | Tauri Linux | ☐ |
 | 6 | Android | ☐ |
@@ -37,13 +37,13 @@ Deliverables (DESIGN §§2–7, 9, 15, 17):
 Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests green, commit + push.
 
 ## Phase 2 — projection, import/export, mirror + git
-- [ ] `core::projection` (`exact` and `portable` profiles, §12.1) + sanitisation fixtures.
-- [ ] `core::import` planner (§12.3): folder + zip streaming walkers, skip rules, `.obsidian/app.json` settings, classification, PDF hidden-by-attachment-folder rule, idempotency matching, report, dry run.
-- [ ] Export: streamed zip (native), folder export; server `GET /api/admin/export.zip`; server-side import `POST /api/admin/import {zip_hash}`.
-- [ ] `tests/fixtures/vault/` awkward fixture vault (full list in DESIGN §12.3) + byte-for-byte round-trip CI test (client path and server path).
-- [ ] Mirror task (§13): separate `mirror-state.db`, debounce, incremental diff, atomic writes, hardlinks (→ reflink → copy fallback), markers, `rebuild-mirror`.
-- [ ] Git: commit after quiet period / max interval, summary messages, `.gitignore` generation, gc, deploy key generation, push with non-fatal failures, optional LFS.
-- [ ] Tests: mirror == projection after random op sequences (driven by sim), kill mid-write, rename/delete/collision, mirror-blocked doesn't affect sync latency.
+- [x] `core::projection` (`exact` and `portable` profiles, §12.1) + sanitisation fixtures.
+- [x] `core::import` planner (§12.3): folder + zip streaming walkers, skip rules, `.obsidian/app.json` settings, classification, PDF hidden-by-attachment-folder rule, idempotency matching, report, dry run.
+- [x] Export: streamed zip (native), folder export; server `GET /api/admin/export.zip`; server-side import `POST /api/admin/import {zip_hash}`.
+- [x] `tests/fixtures/vault/` awkward fixture vault (full list in DESIGN §12.3) + byte-for-byte round-trip CI test (client path and server path).
+- [x] Mirror task (§13): separate `mirror-state.db`, debounce, incremental diff, atomic writes, hardlinks (→ reflink → copy fallback), markers, `rebuild-mirror`.
+- [x] Git: commit after quiet period / max interval, summary messages, `.gitignore` generation, gc, deploy key generation, push with non-fatal failures, optional LFS.
+- [x] Tests: mirror == projection after random op sequences (driven by sim), kill mid-write, rename/delete/collision, mirror-blocked doesn't affect sync latency.
 
 ## Phase 3 — web app + Docker + DEPLOY.md
 - [ ] `ui/` Svelte 5 + TS + Vite SPA, pnpm (via corepack). Backend interface + WebBackend (worker + core WASM + Yjs + IDB) + MemoryBackend (§11.2).
@@ -85,3 +85,4 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 ## Phase log
 - 2026-09-29 — Phase 0: `docs/DESIGN.md` written and approved in full (D1–D11). Repo created at github.com/dochmccrum/jess-notes (private).
 - 2026-09-29 — Phase 1: Rust workspace (`core`, `core/wasm`, `server`). Core: ids/HLC, op model + CBOR protocol, `apply` (LWW registers, cycles, collision suffixes, trash/restore/purge, recovered-after-purge), link/tag/frontmatter/maths extraction, resolver, Invariant R rewrite formatter + stale-link rule, sans-IO sync client (KV persistence, optimistic view, redirects, quarantine) and blob transfer state machine. Server: SQLite schema, single-writer engine with link pass and compaction, WS + HTTP long-poll sync, resumable chunked blob store with Range, auth (setup code / env password, argon2id, device tokens, pairing, rate limits, revoke), admin status, snapshots, GC, trash retention, CLI (`serve`, `integrity-check`, `snapshot`, `reset-password`, `gc --dry-run`). Tests: 10k-seed deterministic simulation (green; it found and drove fixes for 12 real bugs, recorded in DESIGN §22), property tests, deterministic §6 scenarios, conformance fixtures, Yjs↔yrs both directions, e2e against the real binary (p50 edit→remote latency ≈ a few ms locally), SIGKILL crash tests with `integrity-check --hashes`. `docs/PROTOCOL.md` (golden-checked), CI workflow. Pushed to the session branch `claude/fervent-johnson-qjsqyv` (not `main`: this session may only push its own branch).
+- 2026-09-29 — Phase 2: `core::projection` (exact + portable, sanitisation fixtures), `core::import` (folder and zip walkers, skip rules, `.obsidian/app.json`, classification incl. non-UTF-8 notes and the attachment-folder PDF rule, idempotency with ask/overwrite/keep-both/skip, unresolved-links and collision report, dry run), `core::export` + a streaming ZIP64 writer; server `GET /api/admin/export.zip` (streamed) and `POST /api/admin/import {zip_hash}`. Awkward fixture vault (`tests/fixtures/vault`, generator `make_vault.py`) with byte-for-byte round-trip tests for the server path (folder and zip sources), the client path (real sync client) and over HTTP. Mirror (`mirror-state.db`, atomic writes, hardlinks → reflink → copy, markers, startup repair, `rebuild-mirror`, `integrity-check --mirror`) and git (commit after quiet period / max interval with summary messages, excludes, deploy key, non-fatal push with backoff, gc, optional LFS). Tests: mirror == projection in the simulation (every third seed), rename/delete/collision commits, SIGKILL crash test now verifies the mirror, blocked mirror doesn't slow pushes.

@@ -13,12 +13,20 @@ pub mod snapshot;
 pub mod tasks;
 pub mod writer;
 
-/// Mirror hooks (implemented in phase 2).
-pub fn start_mirror(_app: http::Shared) {}
-pub async fn flush_mirror(_app: http::Shared) {}
-pub fn rebuild_mirror(_cfg: &config::Config) -> error::Result<()> {
-    Err(error::Error::Other("the mirror arrives in phase 2".into()))
+pub mod mirror_task;
+
+pub fn start_mirror(app: http::Shared) {
+    mirror_task::start(app)
 }
-pub fn mirror_check(_cfg: &config::Config) -> error::Result<Vec<String>> {
-    Ok(vec![])
+pub async fn flush_mirror(app: http::Shared) {
+    mirror_task::flush(app).await
 }
+pub fn rebuild_mirror(cfg: &config::Config) -> error::Result<()> {
+    mirror_task::rebuild(cfg)
+}
+pub fn mirror_check(cfg: &config::Config) -> error::Result<Vec<String>> {
+    mirror_task::check(cfg)
+}
+pub mod git;
+pub mod mirror;
+pub mod vault_io;

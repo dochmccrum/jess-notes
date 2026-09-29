@@ -1,0 +1,23 @@
+{
+  "segments": [
+    { "name": "Plain name.md", "portable": "Plain name.md" },
+    { "name": "a<b>c:d\"e|f?g*h.md", "portable": "a_b_c_d_e_f_g_h.md" },
+    { "name": "back\\slash.md", "portable": "back_slash.md" },
+    { "name": "tab\there.md", "portable": "tab_here.md" },
+    { "name": "trailing dots...", "portable": "trailing dots" },
+    { "name": "trailing space ", "portable": "trailing space" },
+    { "name": "CON", "portable": "CON_" },
+    { "name": "con.md", "portable": "con_.md" },
+    { "name": "Com1.tar.gz", "portable": "Com1_.tar.gz" },
+    { "name": "LPT9", "portable": "LPT9_" },
+    { "name": "CONSOLE.md", "portable": "CONSOLE.md" },
+    { "name": "...", "portable": "_" },
+    { "name": "Café.md", "portable": "Café.md" },
+    { "name": "日本語.md", "portable": "日本語.md" }
+  ],
+  "collisions": [
+    { "siblings": ["a.md", "A.md"], "portable": ["a.md", "A (2).md"] },
+    { "siblings": ["x:y.md", "x_y.md", "X?y.md"], "portable": ["x_y.md", "x_y (2).md", "X_y (3).md"] },
+    { "siblings": ["Folder", "folder"], "folders": true, "portable": ["Folder", "folder (2)"] }
+  ]
+}

@@ -40,6 +40,7 @@ pub struct App {
     pub setup_code: Mutex<Option<String>>,
     pub started: u64,
     pub status: Mutex<serde_json::Map<String, serde_json::Value>>,
+    pub mirror: std::sync::OnceLock<Arc<Mutex<crate::mirror::Mirror>>>,
 }
 
 pub type Shared = Arc<App>;
@@ -118,6 +119,8 @@ pub fn router(app: Shared) -> Router {
         .route("/api/blobs/{hash}/derived/{kind}", get(blob_derived))
         .route("/api/admin/status", get(admin_status))
         .route("/api/admin/snapshot/latest", get(admin_snapshot))
+        .route("/api/admin/export.zip", get(admin_export))
+        .route("/api/admin/import", post(admin_import))
         .fallback(static_files)
         .layer(DefaultBodyLimit::max(
             (jess_core::blobs::CHUNK_SIZE + 64 * 1024) as usize,
@@ -234,6 +237,184 @@ async fn admin_snapshot(State(app): State<Shared>, headers: HeaderMap) -> Respon
                 .expect("response")
         }
         Err(_) => err(StatusCode::NOT_FOUND, "snapshot unreadable"),
+    }
+}
+
+/// A blocking `Write` that forwards 64 KiB chunks to an async response body.
+struct ChannelWriter {
+    tx: tokio::sync::mpsc::Sender<Result<axum::body::Bytes, std::io::Error>>,
+    buf: Vec<u8>,
+}
+
+impl std::io::Write for ChannelWriter {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.buf.extend_from_slice(b);
+        if self.buf.len() >= 64 * 1024 {
+            self.flush()?;
+        }
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        if !self.buf.is_empty() {
+            let chunk = axum::body::Bytes::from(std::mem::take(&mut self.buf));
+            self.tx
+                .blocking_send(Ok(chunk))
+                .map_err(|_| std::io::Error::other("client went away"))?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    profile: Option<String>,
+    trash: Option<bool>,
+}
+
+/// `GET /api/admin/export.zip`: the whole vault as a streamed zip (read-only, one consistent snapshot).
+async fn admin_export(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<ExportQuery>,
+) -> Response {
+    if app.device(&headers).is_none() {
+        return unauthorized();
+    }
+    let profile = if q.profile.as_deref() == Some("portable") {
+        jess_core::projection::Profile::Portable
+    } else {
+        jess_core::projection::Profile::Exact
+    };
+    let opts = jess_core::projection::Options {
+        profile,
+        include_trash: q.trash.unwrap_or(false),
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let app2 = app.clone();
+    tokio::task::spawn_blocking(move || {
+        let run = || -> std::io::Result<()> {
+            let conn = app2.reader().map_err(std::io::Error::other)?;
+            let mut snap =
+                crate::vault_io::Snapshot::begin(&conn, &app2.fs).map_err(std::io::Error::other)?;
+            let p = jess_core::projection::project(&snap.state, opts);
+            let w = ChannelWriter {
+                tx: tx.clone(),
+                buf: Vec::new(),
+            };
+            let mut w = jess_core::export::write_zip(&p, &mut snap, w, |_, _| {})?;
+            std::io::Write::flush(&mut w)
+        };
+        if let Err(e) = run() {
+            tracing::warn!("export failed: {e}");
+            let _ = tx.blocking_send(Err(e));
+        }
+    });
+    let name = format!("jess-export-{}.zip", crate::snapshot::utc_stamp(now_ms()));
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/zip")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{name}\""),
+        )
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(tokio_stream_from(rx)))
+        .expect("response")
+}
+
+fn tokio_stream_from<T: Send + 'static>(
+    mut rx: tokio::sync::mpsc::Receiver<T>,
+) -> impl futures_util::Stream<Item = T> {
+    futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))
+}
+
+#[derive(Deserialize)]
+struct ImportReq {
+    zip_hash: String,
+    conflict: Option<String>,
+    hide_pdfs_in_attachment_folder: Option<bool>,
+    dry_run: Option<bool>,
+}
+
+/// `POST /api/admin/import`: imports a zip that was uploaded as a blob (large vaults from web or
+/// mobile, DESIGN §12.3), with the same core planner as clients. Returns the report (or the plan
+/// for a dry run).
+async fn admin_import(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(req): Json<ImportReq>,
+) -> Response {
+    use jess_core::import::{self, Conflict, PlanOptions, ZipSource};
+    if app.device(&headers).is_none() {
+        return unauthorized();
+    }
+    let Some(h) = parse_hash(&req.zip_hash) else {
+        return err(StatusCode::BAD_REQUEST, "bad hash");
+    };
+    if !app.fs.exists(&h) {
+        return err(StatusCode::NOT_FOUND, "upload the zip as a blob first");
+    }
+    let conflict = match req.conflict.as_deref() {
+        Some("overwrite") => Conflict::Overwrite,
+        Some("keep_both") => Conflict::KeepBoth,
+        Some("skip") | None => Conflict::Skip,
+        Some(_) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "conflict must be skip, overwrite or keep_both",
+            )
+        }
+    };
+    let opts = PlanOptions {
+        conflict,
+        hide_pdfs_in_attachment_folder: req.hide_pdfs_in_attachment_folder.unwrap_or(true),
+        ..Default::default()
+    };
+    let dry = req.dry_run.unwrap_or(false);
+    let app2 = app.clone();
+    let r = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        let f = std::fs::File::open(app2.fs.path(&h)).map_err(|e| e.to_string())?;
+        let mut src = ZipSource::new(std::io::BufReader::new(f)).map_err(|e| e.to_string())?;
+        let conn = app2.reader().map_err(|e| e.to_string())?;
+        let plan = {
+            let mut snap =
+                crate::vault_io::Snapshot::begin(&conn, &app2.fs).map_err(|e| e.to_string())?;
+            struct Ex<'a, 'b>(&'a mut crate::vault_io::Snapshot<'b>);
+            impl import::Existing for Ex<'_, '_> {
+                fn state(&self) -> &jess_core::state::MetaState {
+                    &self.0.state
+                }
+                fn text(&mut self, id: Id) -> Option<Vec<u8>> {
+                    self.0.text(id).ok().map(String::into_bytes)
+                }
+            }
+            import::plan(&mut src, &mut Ex(&mut snap), &opts).map_err(|e| e.to_string())?
+        };
+        if dry {
+            return serde_json::to_value(&plan).map_err(|e| e.to_string());
+        }
+        let state = crate::vault_io::Snapshot::begin(&conn, &app2.fs)
+            .map_err(|e| e.to_string())?
+            .state
+            .clone();
+        let mut sink = crate::vault_io::ServerSink::new(
+            app2.writer.clone(),
+            &app2.fs,
+            now_ms(),
+            rand::random(),
+        );
+        let report = import::execute(&plan, &mut src, &state, &mut sink, |done, total| {
+            app2.set_status("import", json!({ "done": done, "total": total }));
+        })
+        .map_err(|e| e.to_string())?;
+        let mut v = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        v["rejected"] = json!(sink.rejected);
+        Ok(v)
+    })
+    .await;
+    match r {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => err(StatusCode::UNPROCESSABLE_ENTITY, &e),
+        Err(_) => err(StatusCode::INTERNAL_SERVER_ERROR, "import crashed"),
     }
 }
 

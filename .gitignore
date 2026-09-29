@@ -5,3 +5,6 @@
 dist/
 node_modules/
 target/
+ui/src/wasm/
+ui/test-results/
+ui/playwright-report/

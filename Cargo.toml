@@ -23,3 +23,12 @@ percent-encoding = "2"
 opt-level = 1
 [profile.test.package."*"]
 opt-level = 2
+
+# Size-optimised build for the web worker's core.wasm.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

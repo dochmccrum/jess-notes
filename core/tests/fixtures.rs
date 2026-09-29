@@ -159,3 +159,77 @@ fn resolution() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn sanitisation() {
+    use jess_core::apply::{apply_meta, Ctx, Mode, Tx};
+    use jess_core::hlc::Hlc;
+    use jess_core::ops::MetaOp;
+    use jess_core::projection::{project, sanitize_segment, Options, Profile};
+    use jess_core::state::MetaState;
+    let f = load("sanitisation.json");
+    for c in f["segments"].as_array().unwrap() {
+        assert_eq!(
+            sanitize_segment(c["name"].as_str().unwrap()),
+            c["portable"].as_str().unwrap(),
+            "{c}"
+        );
+    }
+    // Collisions: the sibling with the smaller entry id keeps its name (ids follow list order).
+    for c in f["collisions"].as_array().unwrap() {
+        let mut st = MetaState::new();
+        let folders = c["folders"].as_bool().unwrap_or(false);
+        let names: Vec<&str> = c["siblings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        for (i, n) in names.iter().enumerate() {
+            let op = MetaOp::Create {
+                id: Id([i as u8 + 1; 16]),
+                kind: if folders { "folder" } else { "markdown" }.into(),
+                parent: None,
+                name: n.to_string(),
+                tree_visible: true,
+                blob: None,
+                blob_info: None,
+                created_at: None,
+                modified_at: None,
+                props: vec![],
+            };
+            apply_meta(
+                &mut st,
+                &mut Tx::new(),
+                &op,
+                &Ctx {
+                    hlc: Hlc::new(1 + i as u64, 0, 1),
+                    known_seq: 0,
+                    replica: 1,
+                    op_id: i as u64,
+                    mode: Mode::Server,
+                    now: 0,
+                },
+            )
+            .unwrap();
+        }
+        let p = project(
+            &st,
+            Options {
+                profile: Profile::Portable,
+                include_trash: false,
+            },
+        );
+        let by = p.by_id();
+        let got: Vec<String> = (0..names.len())
+            .map(|i| by[&Id([i as u8 + 1; 16])].path.clone())
+            .collect();
+        let want: Vec<String> = c["portable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(got, want, "{c}");
+    }
+}

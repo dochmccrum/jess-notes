@@ -1,0 +1,1 @@
+﻿Starts with a BOM.

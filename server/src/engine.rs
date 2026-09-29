@@ -1493,7 +1493,14 @@ impl Engine {
                 [h.0.to_vec()],
                 |r| r.get::<_, i64>(0),
             )? > 0;
-            if !self.blob_present(h)? && !uploading {
+            // A file installed in the last hour may belong to an import that hasn't recorded it yet.
+            let fresh = std::fs::metadata(fs.path(h))
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map(|a| a.as_secs() < 3600)
+                .unwrap_or(false);
+            if !self.blob_present(h)? && !uploading && !fresh {
                 fs.delete(h)?;
                 n += 1;
             }

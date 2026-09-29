@@ -36,4 +36,5 @@ libc = "0.2"
 tempfile = "3"
 proptest = "1"
 tokio-tungstenite = "0.27"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 ureq = { version = "3", features = ["json"] }

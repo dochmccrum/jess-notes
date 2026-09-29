@@ -914,3 +914,29 @@ each tightens a rule the simulation showed was underspecified.
     resolved relative to their folder stay relative. Suffix/basename fallbacks mean many moves need
     no rewrite at all (e.g. `[[Proj/Plan]]` still resolves after `Proj/` moves into `Archive/`); the
     server only rewrites links whose resolution would actually change.
+
+### Phase 2 notes
+
+12. **Export zips are written by a small streaming ZIP64 writer in core** (`core::zipstream`:
+    data descriptors, UTF-8 names, stored or deflated entries, extended-timestamp extra, ZIP64 when an
+    entry or offset needs it). The `zip` crate is used only to *read* imports. This streams a multi-GB
+    vault to a socket or file without temp files or seeking.
+13. **Git excludes live in `.git/info/exclude`** (and LFS rules in `.git/info/attributes`) rather than a
+    generated `.gitignore` in the mirror root, so no generated file can collide with a vault file of the
+    same name and the mirror stays exactly equal to the projection.
+14. **The mirror and exports read through a `Snapshot`** (one read transaction on their own connection):
+    a consistent state that never blocks the writer. The mirror recomputes the whole projection in
+    memory each run (cheap) but only rewrites files whose entry, path or content changed (docs with
+    rows newer than its `last_seq`; text is skipped when its SHA-256 is unchanged).
+15. **Server-side import runs each batch as its own writer job** (`ServerSink` over the `Writer`), so a
+    large import never blocks sync for long. Import ids are hash-derived per run (74 random bits kept).
+16. **Import details:** a single top-level folder in a zip is stripped (vault zips are usually
+    `Vault/…`); `\` separators are normalised; zip entries that are absolute or contain `..` are
+    skipped and reported; entries over 16 MiB with a compression ratio above 1000 are skipped as
+    suspicious; `._*` AppleDouble files are skipped like `.DS_Store`. `attachmentFolderPath` values
+    `/`, `./` and empty mean "no dedicated folder" (nothing hidden); `./sub` hides PDFs in any folder
+    named `sub`; anything else is a fixed vault folder. Case-insensitive name collisions are listed in
+    the report (they matter only for the portable profile). If the vault record isn't known yet (a
+    client that hasn't synced), applying the attachment settings is a warning, not a failure.
+17. **GC never deletes a blob file modified in the last hour**, closing a race with server-side import
+    (file installed, row not yet recorded).

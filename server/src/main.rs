@@ -174,6 +174,7 @@ fn serve(cfg: Config) -> Result<(), String> {
         setup_code: Mutex::new(setup_code),
         started: now_ms(),
         status: Mutex::new(Default::default()),
+        mirror: Default::default(),
     });
     let _ = HashMap::<u8, u8>::new();
     let rt = tokio::runtime::Builder::new_multi_thread()

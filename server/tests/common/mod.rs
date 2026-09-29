@@ -31,8 +31,12 @@ impl Server {
         Server::start_on(dir, free_port())
     }
     pub fn start_on(dir: &Path, port: u16) -> Server {
+        Server::start_env(dir, port, &[])
+    }
+    pub fn start_env(dir: &Path, port: u16, env: &[(&str, &str)]) -> Server {
         let child = Command::new(env!("CARGO_BIN_EXE_jess"))
             .arg("serve")
+            .envs(env.iter().copied())
             .env("JESS_DATA_DIR", dir)
             .env("PORT", port.to_string())
             .env("JESS_ADMIN_PASSWORD", PASSWORD)
@@ -57,6 +61,23 @@ impl Server {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("server did not become healthy");
+    }
+    /// Waits until the mirror has caught up with the database head.
+    pub fn wait_mirror(&self, token: &str) -> bool {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(30) {
+            if let Ok(mut r) = ureq::get(&self.url("/api/admin/status"))
+                .header("authorization", &format!("Bearer {token}"))
+                .call()
+            {
+                let v: serde_json::Value = r.body_mut().read_json().unwrap_or_default();
+                if v["mirror"]["ok"] == true && v["mirror"]["last_seq"] == v["head_seq"] {
+                    return true;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        false
     }
     pub fn url(&self, p: &str) -> String {
         format!("http://127.0.0.1:{}{p}", self.port)
@@ -95,12 +116,19 @@ impl Drop for Server {
 }
 
 pub fn integrity(dir: &Path, hashes: bool) -> (bool, String) {
+    integrity_opts(dir, hashes, false)
+}
+
+pub fn integrity_opts(dir: &Path, hashes: bool, mirror: bool) -> (bool, String) {
     let mut c = Command::new(env!("CARGO_BIN_EXE_jess"));
     c.arg("integrity-check")
         .env("JESS_DATA_DIR", dir)
         .env("RUST_LOG", "error");
     if hashes {
         c.arg("--hashes");
+    }
+    if mirror {
+        c.arg("--mirror");
     }
     let o = c.output().unwrap();
     (
@@ -237,3 +265,4 @@ impl WsClient {
         jess_core::doc::text(&d)
     }
 }
+pub mod inproc;

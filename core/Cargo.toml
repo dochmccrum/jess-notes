@@ -5,8 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["yrs"]
+default = ["yrs", "zip"]
 yrs = ["dep:yrs"]
+zip = ["dep:zip"]
 wasm = []
 
 [dependencies]
@@ -19,6 +20,10 @@ serde.workspace = true
 serde_json.workspace = true
 saphyr.workspace = true
 percent-encoding.workspace = true
+crc32fast = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+imagesize = "0.13"
+zip = { version = "2.4", default-features = false, features = ["deflate-flate2", "flate2"], optional = true }
 
 [dev-dependencies]
 proptest = "1"

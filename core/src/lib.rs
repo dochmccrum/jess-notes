@@ -14,7 +14,11 @@ pub mod blobs;
 pub mod client;
 #[cfg(feature = "yrs")]
 pub mod doc;
+pub mod export;
+pub mod import;
 pub mod kv;
 pub mod links;
+pub mod projection;
 pub mod resolve;
 pub mod rewrite;
+pub mod zipstream;

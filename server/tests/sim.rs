@@ -104,6 +104,7 @@ struct Sim {
     faults: Faults,
     page_limit: u64,
     seed: u64,
+    mirror: Option<jess_server::mirror::Mirror>,
 }
 
 const NAMES: &[&str] = &[
@@ -169,6 +170,20 @@ impl Sim {
             blob_fail: f(0.1),
         };
         let page_limit = [64u64, 512, 1 << 20][rng.below(3) as usize];
+        let mirror = if seed.is_multiple_of(3) {
+            Some(
+                jess_server::mirror::Mirror::open(
+                    dir.path().join("mirror"),
+                    &dir.path().join("mirror-state.db"),
+                    dir.path().join("unused.db"),
+                    fs.clone(),
+                    false,
+                )
+                .unwrap(),
+            )
+        } else {
+            None
+        };
         Sim {
             rng,
             now: 10 * DAY,
@@ -183,6 +198,7 @@ impl Sim {
             faults,
             page_limit,
             seed,
+            mirror,
         }
     }
 
@@ -1189,6 +1205,11 @@ impl Sim {
                 self.pump_all();
             }
             3 if self.rng.chance(self.faults.server_crash * 3.0) => self.server_crash(),
+            4 | 5 => {
+                if let Some(m) = self.mirror.as_mut() {
+                    m.sync_with(&self.engine.as_ref().unwrap().conn).unwrap();
+                }
+            }
             _ => {}
         }
     }
@@ -1345,6 +1366,15 @@ impl Sim {
         let e = self.engine.as_mut().unwrap();
         let problems = e.state.check_invariants();
         assert!(problems.is_empty(), "seed {seed}: invariants: {problems:?}");
+        if let Some(m) = self.mirror.as_mut() {
+            m.sync_with(&e.conn).unwrap();
+            let p = jess_server::mirror::check_with(&m.root, &e.conn, &self.fs).unwrap();
+            assert!(
+                p.is_empty(),
+                "seed {seed}: mirror != projection: {p:?}\n{}",
+                self.trace.join("\n")
+            );
+        }
         let mut server: Vec<_> = e.state.iter().cloned().collect();
         server.sort_by_key(|x| x.id);
         // Docs on the server.
