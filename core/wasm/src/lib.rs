@@ -571,8 +571,17 @@ impl Core {
     /// All entries of the optimistic view (JSON array).
     #[wasm_bindgen(js_name = viewJson)]
     pub fn view_json(&self) -> String {
-        let v: Vec<Value> = self.c.view().iter().map(entry_json).collect();
+        let v: Vec<Value> = self.c.view().iter().map(|e| self.entry_view(e)).collect();
         serde_json::to_string(&v).unwrap_or_default()
+    }
+
+    /// An entry plus what is known about its blob (size, mime, oriented dimensions).
+    fn entry_view(&self, e: &Entry) -> Value {
+        let mut v = entry_json(e);
+        if let Some(f) = e.blob.and_then(|h| self.c.blob_facts(&h)) {
+            v["blobInfo"] = json!({ "size": f.size, "mime": f.mime, "width": f.width, "height": f.height, "orientation": f.orientation });
+        }
+        v
     }
 
     #[wasm_bindgen(js_name = entriesJson)]
@@ -581,7 +590,7 @@ impl Core {
         for i in 0..ids.length() {
             if let Some(id) = ids.get(i).as_string().and_then(|s| Id::parse(&s)) {
                 match self.c.view().get(&id) {
-                    Some(e) => v.push(entry_json(e)),
+                    Some(e) => v.push(self.entry_view(e)),
                     None => v.push(json!({"id": id.to_string(), "deleted": true})),
                 }
             }

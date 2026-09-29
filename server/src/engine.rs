@@ -798,6 +798,25 @@ impl Engine {
                     "UPDATE blobs SET unreferenced_since = NULL WHERE hash = ?1",
                     [h.0.to_vec()],
                 )?;
+                // The bytes may have arrived before any entry described them (server-side
+                // import, or an upload that finished first): fill facts still unknown. Known
+                // facts are never overwritten; the row gets a new seq so clients learn them.
+                if let Some(i) = info {
+                    let missing: bool = self.conn.query_row(
+                        "SELECT (mime IS NULL AND ?2 IS NOT NULL) OR (width IS NULL AND ?3 IS NOT NULL)
+                             OR (height IS NULL AND ?4 IS NOT NULL) OR (orientation IS NULL AND ?5 IS NOT NULL)
+                         FROM blobs WHERE hash = ?1",
+                        params![h.0.to_vec(), i.mime, i.width.map(|v| v as i64), i.height.map(|v| v as i64), i.orientation.map(|v| v as i64)],
+                        |r| r.get(0),
+                    )?;
+                    if missing {
+                        let seq = self.next_seq();
+                        self.conn.execute(
+                            "UPDATE blobs SET mime = coalesce(mime, ?2), width = coalesce(width, ?3), height = coalesce(height, ?4), orientation = coalesce(orientation, ?5), seq = ?6 WHERE hash = ?1",
+                            params![h.0.to_vec(), i.mime, i.width.map(|v| v as i64), i.height.map(|v| v as i64), i.orientation.map(|v| v as i64), seq as i64],
+                        )?;
+                    }
+                }
             }
             None => {
                 let seq = self.next_seq();

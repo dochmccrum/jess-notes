@@ -340,3 +340,70 @@ async fn pairing_revoke_and_http_fallback() {
     }
     assert!(limited);
 }
+
+/// Blob facts (size, mime, dimensions) reach every client with the blob row, and the creating
+/// client knows them immediately from its own op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blob_facts_propagate() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start(dir.path());
+    let mut a = WsClient::new(srv.login("A"), 1);
+    let mut b = WsClient::new(srv.login("B"), 2);
+    a.connect(&srv.ws_url()).await;
+    b.connect(&srv.ws_url()).await;
+    for c in [&mut a, &mut b] {
+        assert!(
+            c.until(Duration::from_secs(5), |c| c.status()
+                == jess_core::client::Status::Synced)
+                .await
+        );
+    }
+    let h = Hash::of(b"not really a png");
+    let info = jess_core::model::BlobInfo {
+        size: 16,
+        mime: Some("image/png".into()),
+        width: Some(640),
+        height: Some(480),
+        orientation: None,
+    };
+    let id = Id::new_v7(now_ms(), [7; 10]);
+    let o =
+        a.c.local_meta(
+            vec![MetaOp::Create {
+                id,
+                kind: KIND_MEDIA.into(),
+                parent: None,
+                name: "pic.png".into(),
+                tree_visible: false,
+                blob: Some(h),
+                blob_info: Some(info.clone()),
+                created_at: None,
+                modified_at: None,
+                props: vec![],
+            }],
+            now_ms(),
+        )
+        .unwrap();
+    assert_eq!(a.c.blob_facts(&h), Some(&info));
+    a.handle(o).await;
+    a.pump(Duration::from_millis(300)).await;
+    let ok = b
+        .until(Duration::from_secs(5), |c| {
+            c.blob_facts(&h).and_then(|f| f.width) == Some(640)
+        })
+        .await;
+    assert!(
+        ok,
+        "B never learned the facts: entry={:?} facts={:?} a_status={:?}",
+        b.c.view().get(&id).map(|e| e.blob),
+        b.c.blob_facts(&h),
+        a.c.status()
+    );
+    assert_eq!(
+        b.c.blob_facts(&h).unwrap().mime.as_deref(),
+        Some("image/png")
+    );
+    // Facts survive a reload from the KV store.
+    let (c2, _) = jess_core::client::Client::load(b.kv.clone(), 99, jess_core::blobs::CHUNK_SIZE);
+    assert_eq!(c2.blob_facts(&h).and_then(|f| f.height), Some(480));
+}

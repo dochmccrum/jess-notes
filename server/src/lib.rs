@@ -5,6 +5,7 @@ pub mod blobfs;
 pub mod changes;
 pub mod config;
 pub mod db;
+pub mod derive;
 pub mod engine;
 pub mod error;
 pub mod http;

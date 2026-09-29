@@ -12,6 +12,8 @@ pub const P_QUARANTINE: u8 = b'q';
 pub const P_REDIRECT: u8 = b'r';
 pub const P_BLOB: u8 = b'b';
 pub const P_DOWNLOAD: u8 = b'y';
+/// Known facts about blobs (size, mime, dimensions), from the server's blob rows or local ingest.
+pub const P_FACT: u8 = b'f';
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Write {
@@ -70,6 +72,11 @@ pub fn parse_doc_key(k: &[u8]) -> Option<(Id, String, u64)> {
 }
 pub fn blob_key(h: Hash) -> Vec<u8> {
     let mut k = vec![P_BLOB];
+    k.extend_from_slice(&h.0);
+    k
+}
+pub fn fact_key(h: Hash) -> Vec<u8> {
+    let mut k = vec![P_FACT];
     k.extend_from_slice(&h.0);
     k
 }

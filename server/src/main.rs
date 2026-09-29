@@ -35,6 +35,7 @@ fn main() -> ExitCode {
         "gc" => gc(cfg, flag("--dry-run")),
         "rebuild-mirror" => rebuild_mirror(cfg),
         "health" => health(&cfg),
+        "derive" => jess_server::derive::cli(&args[1..]),
         "version" | "--version" => {
             println!("jess {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -204,6 +205,7 @@ fn serve(cfg: Config) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     rt.block_on(async move {
         jess_server::tasks::spawn(app.clone());
+        jess_server::derive::spawn(app.clone());
         jess_server::start_mirror(app.clone());
         let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
         let listener = tokio::net::TcpListener::bind(addr)

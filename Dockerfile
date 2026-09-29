@@ -26,6 +26,23 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && wasm-bindgen --target web --out-dir /out/wasm --out-name core target/wasm32-unknown-unknown/wasm-release/jess_core_wasm.wasm \
  && (wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int -o /out/wasm/core_bg.wasm /out/wasm/core_bg.wasm || echo "wasm-opt failed; keeping unoptimised wasm")
 
+# ---- 1b. pdfium (PDF thumbnails and text, DESIGN §8) -------------------------------------------
+# The pdfium-binaries build (chromium/7999) as shipped in the pypdfium2 5.13.0 wheel on PyPI:
+# immutable files with published SHA-256s, verified here.
+FROM ${REGISTRY}/rust:1.93-bookworm AS pdfium
+ARG TARGETARCH
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) url=https://files.pythonhosted.org/packages/d3/7c/74a2fb48e5b0d2402d9ca64b39074c722d67e9a8a2c58449a843a8c2329a/pypdfium2-5.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl; \
+             sum=81df25c1ab4c13ff773102d3cbea1967511d079123b067fc077bd0c4d57d91d8 ;; \
+      arm64) url=https://files.pythonhosted.org/packages/fe/31/f8210d53775f142be934336665b1d60e800c3f176f28c29b4908d945c518/pypdfium2-5.13.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl; \
+             sum=9ee8c2bb2e68b396ab4a763215ac100dacb6b96d0da5bebeb239a021aecc3a7e ;; \
+      *) echo "unsupported arch ${TARGETARCH}"; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/p.whl "$url"; \
+    echo "$sum  /tmp/p.whl" | sha256sum -c -; \
+    unzip -q -j /tmp/p.whl 'pypdfium2_raw/libpdfium.so' -d /out
+
 # ---- 2. Web UI -------------------------------------------------------------------------------
 FROM ${REGISTRY}/node:22-bookworm-slim AS ui
 RUN corepack enable
@@ -45,6 +62,7 @@ RUN apt-get update \
  && useradd --uid 1000 --create-home --home-dir /home/jess jess \
  && mkdir -p /data && chown jess:jess /data
 COPY --from=rust /out/jess /usr/local/bin/jess
+COPY --from=pdfium /out/libpdfium.so /usr/local/lib/libpdfium.so
 COPY --from=ui /src/ui/dist /app/ui
 ENV JESS_DATA_DIR=/data \
     JESS_UI_DIR=/app/ui \

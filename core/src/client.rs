@@ -8,9 +8,9 @@
 use crate::apply::{apply_meta, Ctx, Mode, Tx};
 use crate::blobs::{BlobManager, BlobResult, BlobTask};
 use crate::hlc::{Clock, Hlc};
-use crate::ids::Id;
+use crate::ids::{Hash, Id};
 use crate::kv::{self, Write};
-use crate::model::Entry;
+use crate::model::{BlobInfo, Entry};
 use crate::ops::{AckResult, MetaOp, Op, OpBody, Reject};
 use crate::proto::{
     Changes, ClientMsg, Hello, ServerMsg, Welcome, MAX_CLIENT_FRAME, PROTO_VERSION,
@@ -113,6 +113,8 @@ pub struct Client {
     redirects: BTreeMap<(u64, Id), String>,
     redirect_ix: Redirects,
     pub blobs: BlobManager,
+    /// Blob facts (size, mime, dimensions): the server's row wins; local ingest fills gaps.
+    facts: HashMap<Hash, BlobInfo>,
     pub conn: Conn,
     pull_outstanding: Option<u64>,
     pub error: Option<String>,
@@ -141,6 +143,7 @@ impl Client {
             redirects: BTreeMap::new(),
             redirect_ix: Redirects::default(),
             blobs: BlobManager::new(chunk),
+            facts: HashMap::new(),
             conn: Conn::Offline,
             pull_outstanding: None,
             error: None,
@@ -219,6 +222,13 @@ impl Client {
                 }
                 Some(kv::P_BLOB) => c.blobs.load_blob(v),
                 Some(kv::P_DOWNLOAD) => c.blobs.load_download(k, v),
+                Some(kv::P_FACT) => {
+                    if let (Some(h), Ok(f)) =
+                        (Hash::from_slice(&k[1..]), minicbor::decode::<BlobInfo>(v))
+                    {
+                        c.facts.insert(h, f);
+                    }
+                }
                 _ => {}
             }
         }
@@ -685,6 +695,20 @@ impl Client {
             }
             self.confirmed.put(e);
         }
+        let mut fact_changed = BTreeSet::new();
+        for b in &c.blobs {
+            let f = BlobInfo {
+                size: b.size,
+                mime: b.mime.clone(),
+                width: b.width,
+                height: b.height,
+                orientation: b.orientation,
+            };
+            if self.put_fact(b.hash, f, true, &mut out.writes) {
+                fact_changed.insert(b.hash);
+            }
+        }
+        self.entries_for_facts(&fact_changed, &mut changed);
         for b in c.blobs {
             if b.present {
                 out.writes.extend(self.blobs.server_present(b.hash));
@@ -818,11 +842,78 @@ impl Client {
         if added {
             self.rebuild_redirects();
         }
+        // What this device knows about blobs it references (it usually just ingested them), so
+        // embeds render at the right size before the server's row arrives.
+        for op in &built {
+            if let OpBody::Meta(
+                MetaOp::Create {
+                    blob: Some(h),
+                    blob_info: Some(bi),
+                    ..
+                }
+                | MetaOp::SetBlob {
+                    blob: h,
+                    blob_info: Some(bi),
+                    ..
+                },
+            ) = &op.body
+            {
+                self.put_fact(*h, bi.clone(), false, &mut out.writes);
+            }
+        }
         out.events
             .push(Event::EntriesChanged(tx.changed(&self.view)));
         out.events.push(Event::StatusChanged);
         self.flush(&mut out);
         Ok(out)
+    }
+
+    /// Known facts about a blob.
+    pub fn blob_facts(&self, h: &Hash) -> Option<&BlobInfo> {
+        self.facts.get(h)
+    }
+
+    /// Records facts; `authoritative` (the server's row) replaces, otherwise only gaps are
+    /// filled. Returns whether anything changed.
+    fn put_fact(&mut self, h: Hash, f: BlobInfo, authoritative: bool, w: &mut Vec<Write>) -> bool {
+        let merged = match self.facts.get(&h) {
+            None => f,
+            Some(cur) if authoritative => BlobInfo {
+                size: f.size,
+                mime: f.mime.or_else(|| cur.mime.clone()),
+                width: f.width.or(cur.width),
+                height: f.height.or(cur.height),
+                orientation: f.orientation.or(cur.orientation),
+            },
+            Some(cur) => BlobInfo {
+                size: cur.size,
+                mime: cur.mime.clone().or(f.mime),
+                width: cur.width.or(f.width),
+                height: cur.height.or(f.height),
+                orientation: cur.orientation.or(f.orientation),
+            },
+        };
+        if self.facts.get(&h) == Some(&merged) {
+            return false;
+        }
+        w.push(Write::Put(
+            kv::fact_key(h),
+            minicbor::to_vec(&merged).expect("encode"),
+        ));
+        self.facts.insert(h, merged);
+        true
+    }
+
+    /// Entries whose blob's facts changed (their UI view includes the facts).
+    fn entries_for_facts(&self, hashes: &BTreeSet<Hash>, changed: &mut BTreeSet<Id>) {
+        if hashes.is_empty() {
+            return;
+        }
+        for e in self.view.iter() {
+            if e.blob.map(|h| hashes.contains(&h)).unwrap_or(false) {
+                changed.insert(e.id);
+            }
+        }
     }
 
     /// Queues a local Yjs update (already coalesced and applied to the local doc by the host).

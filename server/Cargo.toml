@@ -31,6 +31,9 @@ argon2 = "0.5"
 rand = "0.8"
 zstd = "0.13"
 libc = "0.2"
+# Derivation subprocess only (DESIGN §8): display/thumb variants and PDF thumb/text.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
+pdfium-render = { version = "0.9", default-features = false, features = ["image_025", "pdfium_latest"] }
 
 [dev-dependencies]
 tempfile = "3"
