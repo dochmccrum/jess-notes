@@ -1,4 +1,7 @@
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+dist/
 node_modules/
 target/
-dist/
-.DS_Store

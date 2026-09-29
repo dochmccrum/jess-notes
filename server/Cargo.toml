@@ -1,0 +1,39 @@
+[package]
+name = "jess-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "jess"
+path = "src/main.rs"
+
+[lib]
+name = "jess_server"
+path = "src/lib.rs"
+
+[dependencies]
+jess-core = { path = "../core" }
+yrs.workspace = true
+minicbor.workspace = true
+sha2.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+argon2 = "0.5"
+rand = "0.8"
+zstd = "0.13"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"
+tokio-tungstenite = "0.27"
+ureq = { version = "3", features = ["json"] }

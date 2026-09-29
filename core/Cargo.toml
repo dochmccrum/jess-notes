@@ -1,0 +1,25 @@
+[package]
+name = "jess-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["yrs"]
+yrs = ["dep:yrs"]
+wasm = []
+
+[dependencies]
+yrs = { workspace = true, optional = true }
+minicbor.workspace = true
+uuid.workspace = true
+unicode-normalization.workspace = true
+sha2.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+saphyr.workspace = true
+percent-encoding.workspace = true
+
+[dev-dependencies]
+proptest = "1"
