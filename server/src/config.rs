@@ -21,6 +21,8 @@ pub struct Config {
     pub trash_retention_days: u64,
     /// Trust the last `X-Forwarded-For` hop for client IPs (behind Traefik).
     pub trust_proxy: bool,
+    /// Login/setup/redeem attempts per IP per minute (DESIGN §14: 5).
+    pub login_per_minute: u64,
 }
 
 fn env_bool(k: &str, d: bool) -> bool {
@@ -76,6 +78,7 @@ impl Config {
             blob_retention_days,
             trash_retention_days: env_u64("JESS_TRASH_RETENTION_DAYS", 30),
             trust_proxy: env_bool("JESS_TRUST_PROXY", true),
+            login_per_minute: env_u64("JESS_LOGIN_RATE_PER_MINUTE", 5),
         }
     }
 

@@ -1,0 +1,11 @@
+{
+  "comment": "Gzipped byte budgets (DESIGN §11.8). 'enforce' budgets fail CI; 'track' budgets only warn.",
+  "enforce": {
+    "main": 153600
+  },
+  "track": {
+    "codemirror": 174080,
+    "worker+wasm": 307200,
+    "sqlite": 409600
+  }
+}

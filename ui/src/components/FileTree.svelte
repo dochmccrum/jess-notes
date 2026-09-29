@@ -142,7 +142,7 @@
   }
 </script>
 
-<div class="tree" role="tree" aria-label="Files" tabindex="-1" bind:this={list} onkeydown={onKey}>
+<div class="tree" role="tree" aria-label="Files" tabindex="-1" data-sidebar-focus="files" data-testid="tree" bind:this={list} onkeydown={onKey}>
   {#if rows.length === 0}
     <p class="empty muted">No notes yet. Press <kbd>+</kbd> to create one, or import a vault.</p>
   {:else}

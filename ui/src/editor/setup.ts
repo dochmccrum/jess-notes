@@ -42,6 +42,7 @@ const SPECIALS = new RegExp(
       .map(([a, b]) => (a === b ? esc(a) : `${esc(a)}-${esc(b)}`))
       .join('') +
     ']',
+  'g',
 )
 function esc(c: number) {
   return '\\u' + c.toString(16).padStart(4, '0')
@@ -95,7 +96,7 @@ export function createEditor(parent: HTMLElement, o: EditorOptions): EditorView 
       markdown({ base: markdownLanguage, extensions: [obsidian] }),
       syntaxHighlighting(highlight),
       livePreview(o.links),
-      autocompletion({ override: [wikilinkSource(o.store, () => o.entryId)], icons: false }),
+      autocompletion({ override: [wikilinkSource(o.store, () => o.entryId)], icons: false, interactionDelay: 0 }),
       crlfNewline(dominantCRLF(text)),
       keymap.of([...closeBracketsKeymap, ...completionKeymap, ...yUndoManagerKeymap, ...searchKeymap, ...defaultKeymap, indentWithTab]),
       yCollab(ytext, null, { undoManager: undo }),

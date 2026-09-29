@@ -25,7 +25,7 @@
   }
 </script>
 
-<div class="tags">
+<div class="tags" tabindex="-1" data-sidebar-focus="tags">
   {#if !tags.length}<p class="muted">No tags yet. Type <code>#tag</code> in a note.</p>{/if}
   <ul role="list">
     {#each tags as t (t.name)}

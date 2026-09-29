@@ -170,7 +170,9 @@ fn serve(cfg: Config) -> Result<(), String> {
         vault_id,
         tokens: RwLock::new(tokens),
         revoked: tokio::sync::broadcast::channel(16).0,
-        limiter: Mutex::new(Default::default()),
+        limiter: Mutex::new(jess_server::auth::RateLimiter::new(
+            cfg.login_per_minute as usize,
+        )),
         setup_code: Mutex::new(setup_code),
         started: now_ms(),
         status: Mutex::new(Default::default()),

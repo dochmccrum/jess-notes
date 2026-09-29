@@ -859,7 +859,10 @@ impl jess_core::import::ImportSource for JsFolder {
                 compressed: None,
             });
         }
-        let dirs: Vec<String> = get(&self.obj, "dirs").dyn_into::<Array>().map(|a| a.iter().filter_map(|d| d.as_string()).collect()).unwrap_or_default();
+        let dirs: Vec<String> = get(&self.obj, "dirs")
+            .dyn_into::<Array>()
+            .map(|a| a.iter().filter_map(|d| d.as_string()).collect())
+            .unwrap_or_default();
         out.sort_by(|a, b| a.path.cmp(&b.path));
         Ok((out, dirs))
     }
@@ -882,7 +885,13 @@ impl std::io::Read for JsBlobReader {
             return Ok(0);
         }
         let n = (buf.len() as u64).min(self.size - self.pos).min(4 << 20);
-        let v = call2(&self.obj, "readAt", &(self.pos as f64).into(), &(n as f64).into()).map_err(io_err)?;
+        let v = call2(
+            &self.obj,
+            "readAt",
+            &(self.pos as f64).into(),
+            &(n as f64).into(),
+        )
+        .map_err(io_err)?;
         let a = Uint8Array::from(v);
         let k = (a.length() as usize).min(buf.len());
         a.subarray(0, k as u32).copy_to(&mut buf[..k]);
@@ -906,12 +915,23 @@ impl std::io::Seek for JsBlobReader {
     }
 }
 
-fn with_source<R>(src: JsValue, f: impl FnOnce(&mut dyn jess_core::import::ImportSource) -> std::io::Result<R>) -> Result<R, JsValue> {
+fn with_source<R>(
+    src: JsValue,
+    f: impl FnOnce(&mut dyn jess_core::import::ImportSource) -> std::io::Result<R>,
+) -> Result<R, JsValue> {
     let is_zip = get(&src, "readAt").is_function();
     let r = if is_zip {
         let size = get(&src, "size").as_f64().unwrap_or(0.0) as u64;
-        let reader = std::io::BufReader::with_capacity(1 << 20, JsBlobReader { obj: src, pos: 0, size });
-        let mut z = jess_core::import::ZipSource::new(reader).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let reader = std::io::BufReader::with_capacity(
+            1 << 20,
+            JsBlobReader {
+                obj: src,
+                pos: 0,
+                size,
+            },
+        );
+        let mut z = jess_core::import::ZipSource::new(reader)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         f(&mut z)
     } else {
         let mut s = JsFolder { obj: src };
@@ -945,7 +965,11 @@ impl Core {
         let out = Array::new();
         for f in files {
             if let Some(id) = view.by_path(&f.path) {
-                if view.get(&id).map(|e| e.kind == "markdown" && e.blob.is_none()).unwrap_or(false) {
+                if view
+                    .get(&id)
+                    .map(|e| e.kind == "markdown" && e.blob.is_none())
+                    .unwrap_or(false)
+                {
                     out.push(&id.to_string().into());
                 }
             }
@@ -955,7 +979,12 @@ impl Core {
 
     /// Plans an import (also the dry run). `texts` maps existing note ids to their exact text.
     #[wasm_bindgen(js_name = importPlan)]
-    pub fn import_plan(&self, src: JsValue, texts: js_sys::Map, opts_json: &str) -> Result<String, JsValue> {
+    pub fn import_plan(
+        &self,
+        src: JsValue,
+        texts: js_sys::Map,
+        opts_json: &str,
+    ) -> Result<String, JsValue> {
         #[derive(Deserialize, Default)]
         #[serde(rename_all = "camelCase")]
         struct O {
@@ -969,14 +998,24 @@ impl Core {
             Some("skip") => jess_core::import::Conflict::Skip,
             _ => jess_core::import::Conflict::Ask,
         };
-        let opts = jess_core::import::PlanOptions { conflict, hide_pdfs_in_attachment_folder: o.hide_pdfs_in_attachment_folder.unwrap_or(true), ..Default::default() };
+        let opts = jess_core::import::PlanOptions {
+            conflict,
+            hide_pdfs_in_attachment_folder: o.hide_pdfs_in_attachment_folder.unwrap_or(true),
+            ..Default::default()
+        };
         let mut m = std::collections::HashMap::new();
         texts.for_each(&mut |v, k| {
-            if let (Some(id), Ok(b)) = (k.as_string().and_then(|s| Id::parse(&s)), v.dyn_into::<Uint8Array>()) {
+            if let (Some(id), Ok(b)) = (
+                k.as_string().and_then(|s| Id::parse(&s)),
+                v.dyn_into::<Uint8Array>(),
+            ) {
                 m.insert(id, b.to_vec());
             }
         });
-        let mut ex = MapExisting { st: self.c.view(), texts: m };
+        let mut ex = MapExisting {
+            st: self.c.view(),
+            texts: m,
+        };
         let plan = with_source(src, |s| jess_core::import::plan(s, &mut ex, &opts))?;
         serde_json::to_string(&plan).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -990,7 +1029,17 @@ impl Core {
     /// The export projection: `{items: [{id, path, kind: dir|text|blob, hash?, modified?}], report, mapped}`.
     pub fn projection(&self, portable: bool, include_trash: bool) -> String {
         use jess_core::projection::{project, Options, Profile, Source};
-        let p = project(self.c.view(), Options { profile: if portable { Profile::Portable } else { Profile::Exact }, include_trash });
+        let p = project(
+            self.c.view(),
+            Options {
+                profile: if portable {
+                    Profile::Portable
+                } else {
+                    Profile::Exact
+                },
+                include_trash,
+            },
+        );
         let items: Vec<Value> = p
             .items
             .iter()
@@ -1000,7 +1049,11 @@ impl Core {
                 Source::Blob(h) => json!({"id": i.id.to_string(), "path": i.path, "kind": "blob", "hash": h.to_hex(), "modified": i.modified_at}),
             })
             .collect();
-        let report = if p.mapped.is_empty() && p.errors.is_empty() { Value::Null } else { Value::String(p.report()) };
+        let report = if p.mapped.is_empty() && p.errors.is_empty() {
+            Value::Null
+        } else {
+            Value::String(p.report())
+        };
         json!({"items": items, "report": report}).to_string()
     }
 }
@@ -1017,14 +1070,25 @@ impl ZipReader {
     pub fn new(src: JsValue) -> Result<ZipReader, JsValue> {
         use jess_core::import::ImportSource;
         let size = get(&src, "size").as_f64().unwrap_or(0.0) as u64;
-        let reader = std::io::BufReader::with_capacity(1 << 20, JsBlobReader { obj: src, pos: 0, size });
-        let mut z = jess_core::import::ZipSource::new(reader).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let reader = std::io::BufReader::with_capacity(
+            1 << 20,
+            JsBlobReader {
+                obj: src,
+                pos: 0,
+                size,
+            },
+        );
+        let mut z = jess_core::import::ZipSource::new(reader)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         z.list().map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(ZipReader { z })
     }
     pub fn read(&mut self, path: &str) -> Result<Uint8Array, JsValue> {
         use jess_core::import::ImportSource;
-        let v = self.z.read_all(path).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let v = self
+            .z
+            .read_all(path)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Uint8Array::from(&v[..]))
     }
 }

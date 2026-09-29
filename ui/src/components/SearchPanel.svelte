@@ -51,7 +51,7 @@
 </script>
 
 <div class="search">
-  <input bind:this={input} type="search" placeholder="Search notes" bind:value={q} aria-label="Search notes" data-testid="search-input" />
+  <input bind:this={input} type="search" data-sidebar-focus="search" placeholder="Search notes" bind:value={q} aria-label="Search notes" data-testid="search-input" />
   {#if busy && !hits.length}<p class="muted">Searching…</p>{/if}
   <ul role="list" data-testid="search-results">
     {#each hits as h (h.id)}

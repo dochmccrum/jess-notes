@@ -170,18 +170,31 @@ pub fn redeem_pairing(conn: &Connection, code: &str, now: u64) -> Result<bool> {
 
 /// Login throttling: 5 attempts/minute/IP, plus a global exponential lockout after 20 failures
 /// in an hour. Checked *before* the argon2 verification.
-#[derive(Default)]
 pub struct RateLimiter {
     per_ip: HashMap<IpAddr, Vec<u64>>,
     failures: Vec<u64>,
+    per_minute: usize,
+}
+
+impl Default for RateLimiter {
+    fn default() -> Self {
+        RateLimiter::new(5)
+    }
 }
 
 impl RateLimiter {
+    pub fn new(per_minute: usize) -> RateLimiter {
+        RateLimiter {
+            per_ip: HashMap::new(),
+            failures: Vec::new(),
+            per_minute: per_minute.max(1),
+        }
+    }
     /// `Err(retry_after_ms)` if the attempt must be refused.
     pub fn check(&mut self, ip: IpAddr, now: u64) -> std::result::Result<(), u64> {
         let v = self.per_ip.entry(ip).or_default();
         v.retain(|t| now < t + 60_000);
-        if v.len() >= 5 {
+        if v.len() >= self.per_minute {
             return Err(v[0] + 60_000 - now);
         }
         self.failures.retain(|t| now < t + 3_600_000);

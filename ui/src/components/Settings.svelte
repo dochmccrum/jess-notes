@@ -3,6 +3,7 @@
   import type { AppState } from '../stores/app.svelte'
   import { createPairing, getToken, listDevices, revokeDevice, setToken } from '../lib/auth'
   import { bindingsFor, get as getCommand } from '../lib/commands'
+  import { applyTheme } from '../lib/theme'
 
   let { app, logout }: { app: AppState; logout(): void } = $props()
   let devices: { id: string; name: string; last_seen: number | null; revoked_at: number | null }[] = $state([])
@@ -23,11 +24,6 @@
     app.saveDevice()
     app.version++
     applyTheme(app.device.theme)
-  }
-
-  export function applyTheme(t: string) {
-    if (t === 'system') document.documentElement.removeAttribute('data-theme')
-    else document.documentElement.dataset.theme = t
   }
 
   async function makePair() {
