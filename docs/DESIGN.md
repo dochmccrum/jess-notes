@@ -862,4 +862,4 @@ Everything else is small: axum, tokio, rusqlite, sha2, minicbor, argon2, saphyr,
 7. iPadOS preparation + docs/MAC.md.
 8. Performance pass against §18, then polish.
 
-Each phase ends with a commit, tests passing, and a short summary. The directory isn't a git repository yet; I'll `git init` at the start of phase 1 unless you already have a remote in mind.
+Each phase ends with tests passing, a commit pushed to `origin/main` (github.com/dochmccrum/jess-notes, private), and a short summary in `docs/PHASES.md`.
