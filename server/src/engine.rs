@@ -127,6 +127,9 @@ pub struct GcReport {
     pub expired_uploads: Vec<String>,
 }
 
+/// (source note, link ordinal, link, currently resolved target)
+type CandidateLink = (Id, u32, Link, Option<Id>);
+
 pub struct Engine {
     pub conn: Connection,
     pub state: MetaState,
@@ -1105,7 +1108,7 @@ impl Engine {
         &self,
         keys: &BTreeSet<String>,
         ids: &BTreeSet<Id>,
-    ) -> Result<Vec<(Id, u32, Link, Option<Id>)>> {
+    ) -> Result<Vec<CandidateLink>> {
         let mut srcs: BTreeSet<Id> = BTreeSet::new();
         {
             let mut st = self

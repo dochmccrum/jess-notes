@@ -375,12 +375,7 @@ impl BlobManager {
             .map(|b| b.hash)
             .collect();
         active.sort();
-        let mut sessions = 0;
-        for h in active {
-            if sessions >= MAX_UPLOADS {
-                break;
-            }
-            sessions += 1;
+        for h in active.into_iter().take(MAX_UPLOADS) {
             if self.in_flight_begin.contains(&h) || self.in_flight_complete.contains(&h) {
                 continue;
             }

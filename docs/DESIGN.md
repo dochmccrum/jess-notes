@@ -863,3 +863,54 @@ Everything else is small: axum, tokio, rusqlite, sha2, minicbor, argon2, saphyr,
 8. Performance pass against §18, then polish.
 
 Each phase ends with tests passing, a commit pushed to `origin/main` (github.com/dochmccrum/jess-notes, private), and a short summary in `docs/PHASES.md`.
+
+---
+
+## 22. Implementation notes and refinements (recorded during phase 1)
+
+These are refinements found while building and simulating phase 1. None changes a D1–D11 decision;
+each tightens a rule the simulation showed was underspecified.
+
+1. **Dedupe is by exact `(replica_id, op_id)`**, not `op_id ≤ last_op_id` (§5.2 step 1). Pushes can
+   arrive reordered (HTTP fallback, retries), and a high-water mark would silently drop an earlier op
+   that arrives late. `op_results` is the dedupe set; when it is pruned (30 days) the replica's
+   `pruned_upto` watermark answers `Duplicate(0)` for ops at or below it. A replayed op gets its
+   original outcome, so a rejection stays a rejection (the client quarantines it again, never drops it).
+2. **Purge keeps the doc's merged update log** in `doc_purged.state` (not only its state vector), and
+   "not covered by the purged state" is an exact inserted-ID-set containment check. The server's yrs
+   doc can hold *pending* structs (a reordered update waiting for its dependency); a state vector
+   overstates coverage in that case and `encode_state` drops pending structs, both of which lost text
+   in the simulation. A recovered note's new first row is `merge(purged_state, update)`. A doc update
+   fully covered by the purged state is acknowledged `Duplicate(0)` and carries nothing to keep.
+   (Privacy note: purged text therefore remains in `jess.db` as a tombstone payload.)
+3. **Purged docs are cleaned up immediately inside the transaction** (not at commit time), so a
+   later op in the same push can recover them; groups use a SQL `SAVEPOINT` so a rejected group
+   can't leave purged rows behind.
+4. **Resolver tie-break adds exact case** (§9.2 rule 7): own folder, then a candidate whose path
+   matches the written target case-sensitively (NFC), then fewest segments, shortest path,
+   lexicographic. D8 allows `note.md` and `Note.md` side by side; without this, no link text could
+   point at one of them and Invariant R could not be satisfied. This is also what Obsidian does on a
+   case-sensitive filesystem.
+5. **Renames of trashed entries are recorded** in `rename_history` and run the Invariant R pass, so
+   links inside trashed notes keep their meaning if they're restored.
+6. **`trashed.at` is the applier's wall time** (server time on the server), not the op's HLC wall, so
+   a device with a skewed clock can't get its trash purged early by the retention task.
+7. **`Changes` pages are cut at commit boundaries** using a small `commits(first_seq, last_seq)` table,
+   so a rename and its rewrites are never split across pages. `rename_history` stores full old/new
+   vault paths (plus `is_folder`) rather than parent/name, which the stale-link rule needs.
+8. **Client persistence is one ordered key-value store** (`core::kv`: native SQLite table, web
+   IndexedDB store). The sans-IO client returns `writes` that the host commits atomically before
+   sending anything. The client keeps only an index of confirmed doc rows in memory; bytes stay in the
+   store. A purge row deletes local doc rows only up to its own seq (later rows belong to a recovery),
+   and an ack never overwrites a doc row already received for the same seq.
+9. **Blobs:** every new reference (ingest) re-verifies with the server even if the device once saw the
+   blob confirmed; a blob row with `present = 0` (GC) sends a confirmed local copy back to the upload
+   queue. GC deletes files on the writer thread after re-checking the blob is still absent and has no
+   upload session, so a concurrent re-upload is never deleted.
+10. **Dependencies:** `yrs` is pinned to 0.26 (0.27+ needs a newer rustc than the 1.93 toolchain).
+    The `uuid` crate was dropped (UUIDv7 is 8 lines; avoids a randomness backend in WASM). The HTTP
+    client in tests is `ureq`, the WebSocket client `tokio-tungstenite` (dev-dependencies only).
+11. **Rewrite formatting keeps a leading `/`** on vault-absolute links, and markdown links that
+    resolved relative to their folder stay relative. Suffix/basename fallbacks mean many moves need
+    no rewrite at all (e.g. `[[Proj/Plan]]` still resolves after `Proj/` moves into `Archive/`); the
+    server only rewrites links whose resolution would actually change.

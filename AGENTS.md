@@ -11,8 +11,11 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 3. `docs/PHASES.md` — phase checklist, current status, and phase log. **Keep it updated.**
 
 ## Current state (2026-09-29)
-- Phase 0 (design) done. **Phase 1 has not started.** No application code exists yet.
-- Next step: Phase 1 (see `docs/PHASES.md`). Wait for the owner's go-ahead if they haven't given it in your session.
+- Phases 0–1 done (see the Phase log in `docs/PHASES.md`). Phase 1 refinements to the design are in DESIGN §22.
+- Next step: Phase 2 (projection, import/export, mirror + git).
+- Test commands: `cargo test --workspace`; long simulation `SIM_SEEDS=10000 cargo test --release -p jess-server --test sim -- --nocapture`
+  (reproduce one seed with `SIM_SEED=n`, which prints a full trace); crash tests `CRASH_ITERS=20 cargo test -p jess-server --test crash`;
+  Yjs compat `cd core/tests/yjs-compat && npm install && node gen.mjs && node verify.mjs`.
 
 ## Working rules (from the owner)
 - Build phase by phase. End each phase with all tests passing, a commit, a push to `origin/main`, and a short summary appended to the Phase log in `docs/PHASES.md`.

@@ -56,7 +56,6 @@ async fn sync_two_clients_rename_rewrites_links_and_latency() {
         b.until(Duration::from_secs(5), |c| c.view().get(&linker).is_some())
             .await
     );
-    assert!(b.until(Duration::from_secs(5), |_| false).await || true);
     b.pump(Duration::from_millis(300)).await;
     assert_eq!(b.doc_text(linker), "See [[Old]] and [x](Old.md#h).\r\n");
     // Rename on B: the server rewrites A's links in the same transaction.
@@ -333,11 +332,10 @@ async fn pairing_revoke_and_http_fallback() {
     // Wrong password is refused; rate limit kicks in.
     let mut limited = false;
     for _ in 0..8 {
-        match ureq::post(&srv.url("/api/auth/login"))
+        if let Err(ureq::Error::StatusCode(429)) = ureq::post(&srv.url("/api/auth/login"))
             .send_json(serde_json::json!({ "password": "nope" }))
         {
-            Err(ureq::Error::StatusCode(429)) => limited = true,
-            _ => {}
+            limited = true
         }
     }
     assert!(limited);

@@ -42,6 +42,12 @@ pub struct Tag {
     pub range: Option<(u32, u32)>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MathSpan {
+    pub range: (u32, u32),
+    pub display: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Extracted {
     pub links: Vec<Link>,
@@ -50,6 +56,9 @@ pub struct Extracted {
     pub frontmatter: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// Maths spans (including delimiters).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub math: Vec<MathSpan>,
     /// Byte range of the frontmatter block (including delimiters), if any.
     #[serde(skip)]
     pub frontmatter_bytes: Option<(usize, usize)>,
@@ -79,6 +88,8 @@ struct Scanner<'a> {
     links: Vec<(Link, [usize; 4])>,
     tags: Vec<(String, usize, usize)>,
     pending_skip: Option<usize>,
+    /// (start, end, display) byte ranges of maths.
+    math: Vec<(usize, usize, bool)>,
 }
 
 fn is_blank(line: &[u8]) -> bool {
@@ -206,7 +217,7 @@ impl<'a> Scanner<'a> {
                 // Display maths: single-line $$…$$ or a block through the next line containing $$.
                 let after = pos + trimmed_start + 2;
                 if let Some(rel) = find_bytes(&b[after..eol], b"$$") {
-                    let _ = rel;
+                    self.math.push((pos + trimmed_start, after + rel + 2, true));
                     pos = next;
                     prev_blank = false;
                     in_para = true;
@@ -216,8 +227,9 @@ impl<'a> Scanner<'a> {
                 let mut close = None;
                 while p < b.len() {
                     let e = line_end(b, p);
-                    if find_bytes(&b[p..e], b"$$").is_some() {
+                    if let Some(k) = find_bytes(&b[p..e], b"$$") {
                         close = Some((e + 1).min(b.len()));
+                        self.math.push((pos + trimmed_start, p + k + 2, true));
                         break;
                     }
                     p = e + 1;
@@ -306,6 +318,7 @@ impl<'a> Scanner<'a> {
                     if b.get(i + 1) == Some(&b'$') {
                         if let Some(j) = self.find_in_para(i + 2, b"$$") {
                             if j <= end {
+                                self.math.push((i, j + 2, true));
                                 i = j + 2;
                                 continue;
                             }
@@ -314,6 +327,7 @@ impl<'a> Scanner<'a> {
                         continue;
                     }
                     if let Some(close) = self.inline_math_end(i, end) {
+                        self.math.push((i, close, false));
                         i = close;
                         continue;
                     }
@@ -765,6 +779,7 @@ pub fn extract(text: &str) -> Extracted {
         links: Vec::new(),
         tags: Vec::new(),
         pending_skip: None,
+        math: Vec::new(),
     };
     if let Some(((fs, fe), (is, ie))) = frontmatter_range(text) {
         out.frontmatter_bytes = Some((fs, fe));
@@ -827,6 +842,11 @@ pub fn extract(text: &str) -> Extracted {
         offs.push((*s, base + i * 2));
         offs.push((*e, base + i * 2 + 1));
     }
+    let mbase = base + sc.tags.len() * 2;
+    for (i, (s, e, _)) in sc.math.iter().enumerate() {
+        offs.push((*s, mbase + i * 2));
+        offs.push((*e, mbase + i * 2 + 1));
+    }
     let u = to_utf16(text, &mut offs);
     let mut links: Vec<Link> = sc
         .links
@@ -846,6 +866,17 @@ pub fn extract(text: &str) -> Extracted {
             range: Some((u[base + i * 2], u[base + i * 2 + 1])),
         });
     }
+    let mut math: Vec<MathSpan> = sc
+        .math
+        .iter()
+        .enumerate()
+        .map(|(i, (_, _, d))| MathSpan {
+            range: (u[mbase + i * 2], u[mbase + i * 2 + 1]),
+            display: *d,
+        })
+        .collect();
+    math.sort_by_key(|m| m.range);
+    out.math = math;
     out
 }
 

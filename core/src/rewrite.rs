@@ -69,10 +69,14 @@ pub fn format_target(
     if dot_prefix && !rel.starts_with("../") {
         rel = format!("./{rel}");
     }
-    let order: Vec<&String> = match via {
-        Via::Basename => vec![&name_form, &abs_form, &rel],
-        Via::Absolute | Via::Suffix => vec![&abs_form, &name_form, &rel],
-        Via::Relative => vec![&rel, &abs_form, &name_form],
+    let order: Vec<&String> = if slash_prefix {
+        vec![&abs_form, &rel, &name_form]
+    } else {
+        match via {
+            Via::Basename => vec![&name_form, &abs_form, &rel],
+            Via::Absolute | Via::Suffix => vec![&abs_form, &name_form, &rel],
+            Via::Relative => vec![&rel, &abs_form, &name_form],
+        }
     };
     for cand in order {
         if ix.resolve(cand, link.syntax, source_folder).map(|r| r.id) == Some(target) {

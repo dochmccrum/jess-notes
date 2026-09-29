@@ -1,0 +1,36 @@
+[
+  {
+    "name": "utf16-edits",
+    "text": "﻿é [[Old]]\r\n日本 ",
+    "updates": [
+      "0101a11f000401017418efbbbff09f9880205b5b4f6c645d5d0d0ae697a5e69cac2000",
+      "0101a11f10c4a11f02a11f0302c3a900",
+      "0001a11f010102"
+    ]
+  },
+  {
+    "name": "rewrite",
+    "rewrite_check": "[[New name]]",
+    "text": "﻿é [[New name]]\r\n日本 ",
+    "updates": [
+      "0101a11f000401017418efbbbff09f9880205b5b4f6c645d5d0d0ae697a5e69cac2000",
+      "0101a11f10c4a11f02a11f0302c3a900",
+      "0001a11f010102",
+      "0101a11f11c4a11f08a11f09084e6577206e616d6501a11f0201020603"
+    ]
+  },
+  {
+    "name": "merged",
+    "text": "﻿é [[New name]]\r\n日本 ",
+    "updates": [
+      "0103a11f000401017418efbbbff09f9880205b5b4f6c645d5d0d0ae697a5e69cac20c4a11f02a11f0302c3a9c4a11f08a11f09084e6577206e616d6501a11f0201020603"
+    ]
+  },
+  {
+    "name": "state",
+    "text": "﻿é [[New name]]\r\n日本 ",
+    "updates": [
+      "0107a11f000401017403efbbbf81a11f000284a11f0203205b5b81a11f050384a11f080b5d5d0d0ae697a5e69cac20c4a11f02a11f0302c3a9c4a11f08a11f09084e6577206e616d6501a11f0201020603"
+    ]
+  }
+]

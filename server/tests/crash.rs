@@ -225,9 +225,11 @@ async fn kill9_during_load() {
     }
     assert_eq!(a.c.pending_count(), 0);
     assert!(a.c.blobs.unconfirmed().is_empty());
-    for q in a.c.quarantine() {
-        panic!("unexpected rejection {:?}", q);
-    }
+    assert!(
+        a.c.quarantine().next().is_none(),
+        "unexpected rejection {:?}",
+        a.c.quarantine().next()
+    );
     let _ = AckResult::Applied(0);
     let mut fresh = WsClient::new(token.clone(), 78);
     fresh.connect(&srv.ws_url()).await;

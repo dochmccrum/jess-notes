@@ -6,8 +6,8 @@ Update the **Status** line and tick boxes as work lands. Each phase ends with: a
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Design doc | ✅ done (approved 2026-09-29) |
-| 1 | core + server + sync protocol + blob store/channel + simulation suite (no UI) | ⏳ next |
-| 2 | projection, import/export engine, server mirror + git | ☐ |
+| 1 | core + server + sync protocol + blob store/channel + simulation suite (no UI) | ✅ done |
+| 2 | projection, import/export engine, server mirror + git | ⏳ next |
 | 3 | web app + Dockerfile + DEPLOY.md | ☐ |
 | 4 | images & PDFs in the UI | ☐ |
 | 5 | Tauri Linux | ☐ |
@@ -20,19 +20,19 @@ Update the **Status** line and tick boxes as work lands. Each phase ends with: a
 ## Phase 1 — core + server + sync + blobs + simulation (no UI)
 
 Deliverables (DESIGN §§2–7, 9, 15, 17):
-- [ ] Cargo workspace: `core/` (jess-core, features `yrs`, `wasm`), `core/wasm/` (wasm-bindgen facade, builds but minimal), `server/` (bin `jess`).
-- [ ] `core`: ids (UUIDv7), HLC (§6.1), op model + CBOR codec via `minicbor` (§5.1, §5.3), `apply` (LWW registers, cycle reject, collision suffix, trash cascade/restore/purge, recovered-after-purge) (§6).
-- [ ] `core`: link/tag/frontmatter extraction (§9.1), resolver (§9.2), rewrite formatter + Invariant R computation (§6.6).
-- [ ] `core`: sans-IO sync client state machine (pending ops, optimistic view + rebase, cursor handling, quarantine, redirects overlay) and blob transfer state machine (upload queue, chunk bitmap, download priorities P0–P4, eviction rule).
-- [ ] `core/fixtures/*.json` conformance fixtures (links, tags, maths, embeds `|300x200` and `#page=3&height=600`, resolution, sanitisation) + Rust runner.
-- [ ] Server: SQLite schema (§4.1) with migrations, single writer task, `synchronous=FULL`, apply loop (§5.2) including link pass, compaction (§5.6), WS protocol + HTTP fallback (§5.3), heartbeats (§5.5).
-- [ ] Server blob store: chunked resumable upload, complete/verify, Range download, presence endpoint, GC (§7).
-- [ ] Server auth: setup code / `JESS_ADMIN_PASSWORD`, argon2id, device tokens, pairing codes, rate limiting (§14.1). Admin status endpoint, `/healthz`.
-- [ ] CLI: `serve`, `integrity-check`, `snapshot`, `reset-password`, `gc --dry-run`; snapshots task (§15); graceful shutdown.
-- [ ] Deterministic simulation suite (§17.1) — 10k seeds in CI, all invariants asserted.
-- [ ] Property tests (§17.2), process-level crash tests (§17.3), Yjs↔yrs compatibility fixtures (§17.4; needs a small Node script using `yjs`).
-- [ ] `docs/PROTOCOL.md` generated/written from core types.
-- [ ] CI workflow (GitHub Actions): fmt, clippy, tests, sim seeds.
+- [x] Cargo workspace: `core/` (jess-core, features `yrs`, `wasm`), `core/wasm/` (wasm-bindgen facade, builds but minimal), `server/` (bin `jess`).
+- [x] `core`: ids (UUIDv7), HLC (§6.1), op model + CBOR codec via `minicbor` (§5.1, §5.3), `apply` (LWW registers, cycle reject, collision suffix, trash cascade/restore/purge, recovered-after-purge) (§6).
+- [x] `core`: link/tag/frontmatter extraction (§9.1), resolver (§9.2), rewrite formatter + Invariant R computation (§6.6).
+- [x] `core`: sans-IO sync client state machine (pending ops, optimistic view + rebase, cursor handling, quarantine, redirects overlay) and blob transfer state machine (upload queue, chunk bitmap, download priorities P0–P4, eviction rule).
+- [x] `core/fixtures/*.json` conformance fixtures (links, tags, maths, embeds `|300x200` and `#page=3&height=600`, resolution, sanitisation) + Rust runner.
+- [x] Server: SQLite schema (§4.1) with migrations, single writer task, `synchronous=FULL`, apply loop (§5.2) including link pass, compaction (§5.6), WS protocol + HTTP fallback (§5.3), heartbeats (§5.5).
+- [x] Server blob store: chunked resumable upload, complete/verify, Range download, presence endpoint, GC (§7).
+- [x] Server auth: setup code / `JESS_ADMIN_PASSWORD`, argon2id, device tokens, pairing codes, rate limiting (§14.1). Admin status endpoint, `/healthz`.
+- [x] CLI: `serve`, `integrity-check`, `snapshot`, `reset-password`, `gc --dry-run`; snapshots task (§15); graceful shutdown.
+- [x] Deterministic simulation suite (§17.1) — 10k seeds in CI, all invariants asserted.
+- [x] Property tests (§17.2), process-level crash tests (§17.3), Yjs↔yrs compatibility fixtures (§17.4; needs a small Node script using `yjs`).
+- [x] `docs/PROTOCOL.md` generated/written from core types.
+- [x] CI workflow (GitHub Actions): fmt, clippy, tests, sim seeds.
 
 Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests green, commit + push.
 
@@ -84,3 +84,4 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 
 ## Phase log
 - 2026-09-29 — Phase 0: `docs/DESIGN.md` written and approved in full (D1–D11). Repo created at github.com/dochmccrum/jess-notes (private).
+- 2026-09-29 — Phase 1: Rust workspace (`core`, `core/wasm`, `server`). Core: ids/HLC, op model + CBOR protocol, `apply` (LWW registers, cycles, collision suffixes, trash/restore/purge, recovered-after-purge), link/tag/frontmatter/maths extraction, resolver, Invariant R rewrite formatter + stale-link rule, sans-IO sync client (KV persistence, optimistic view, redirects, quarantine) and blob transfer state machine. Server: SQLite schema, single-writer engine with link pass and compaction, WS + HTTP long-poll sync, resumable chunked blob store with Range, auth (setup code / env password, argon2id, device tokens, pairing, rate limits, revoke), admin status, snapshots, GC, trash retention, CLI (`serve`, `integrity-check`, `snapshot`, `reset-password`, `gc --dry-run`). Tests: 10k-seed deterministic simulation (green; it found and drove fixes for 12 real bugs, recorded in DESIGN §22), property tests, deterministic §6 scenarios, conformance fixtures, Yjs↔yrs both directions, e2e against the real binary (p50 edit→remote latency ≈ a few ms locally), SIGKILL crash tests with `integrity-check --hashes`. `docs/PROTOCOL.md` (golden-checked), CI workflow. Pushed to the session branch `claude/fervent-johnson-qjsqyv` (not `main`: this session may only push its own branch).

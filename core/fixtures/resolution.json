@@ -1,0 +1,37 @@
+{
+  "vault": [
+    "Note.md", "a/Note.md", "a/b/Deep.md", "img.PNG", "a/x y.md", "file.pdf", "attachments/file.pdf",
+    "Same.md", "same.md", "c/Same.md", "Ünï.md", "Dir.v2/n.md", "Drawing.excalidraw.md", "Note.md.bak"
+  ],
+  "cases": [
+    { "target": "Note", "syntax": "wiki", "from": "x.md", "expect": "Note.md" },
+    { "target": "note", "syntax": "wiki", "from": "x.md", "expect": "Note.md" },
+    { "target": "Note", "syntax": "wiki", "from": "a/y.md", "expect": "a/Note.md" },
+    { "target": "a/Note", "syntax": "wiki", "from": "x.md", "expect": "a/Note.md" },
+    { "target": "/Note", "syntax": "wiki", "from": "a/y.md", "expect": "Note.md" },
+    { "target": "b/Deep", "syntax": "wiki", "from": "x.md", "expect": "a/b/Deep.md" },
+    { "target": "Deep", "syntax": "wiki", "from": "x.md", "expect": "a/b/Deep.md" },
+    { "target": "../Note", "syntax": "wiki", "from": "a/b/Deep.md", "expect": "a/Note.md" },
+    { "target": "./Deep", "syntax": "wiki", "from": "a/b/Deep.md", "expect": "a/b/Deep.md" },
+    { "target": "../../../x", "syntax": "wiki", "from": "a/y.md", "expect": null },
+    { "target": "img.png", "syntax": "wiki", "from": "x.md", "expect": "img.PNG" },
+    { "target": "img", "syntax": "wiki", "from": "x.md", "expect": null },
+    { "target": "file.pdf", "syntax": "wiki", "from": "x.md", "expect": "file.pdf" },
+    { "target": "file.pdf", "syntax": "wiki", "from": "attachments/n.md", "expect": "attachments/file.pdf" },
+    { "target": "x y.md", "syntax": "markdown", "from": "a/n.md", "expect": "a/x y.md" },
+    { "target": "a/x y.md", "syntax": "markdown", "from": "c/n.md", "expect": "a/x y.md" },
+    { "target": "x y.md", "syntax": "markdown", "from": "c/n.md", "expect": "a/x y.md" },
+    { "target": "Same", "syntax": "wiki", "from": "x.md", "expect": "Same.md" },
+    { "target": "same", "syntax": "wiki", "from": "x.md", "expect": "same.md" },
+    { "target": "SAME", "syntax": "wiki", "from": "x.md", "expect": "Same.md" },
+    { "target": "Same", "syntax": "wiki", "from": "c/x.md", "expect": "c/Same.md" },
+    { "target": "Unï", "syntax": "wiki", "from": "x.md", "expect": null },
+    { "target": "Ünï", "syntax": "wiki", "from": "x.md", "expect": "Ünï.md" },
+    { "target": "Ünï", "syntax": "wiki", "from": "x.md", "expect": "Ünï.md" },
+    { "target": "Dir.v2/n", "syntax": "wiki", "from": "x.md", "expect": "Dir.v2/n.md" },
+    { "target": "Drawing.excalidraw", "syntax": "wiki", "from": "x.md", "expect": "Drawing.excalidraw.md" },
+    { "target": "Note.md", "syntax": "wiki", "from": "x.md", "expect": "Note.md" },
+    { "target": "https://example.com", "syntax": "markdown", "from": "x.md", "expect": null },
+    { "target": "Missing", "syntax": "wiki", "from": "x.md", "expect": null }
+  ]
+}

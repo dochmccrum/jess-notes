@@ -1,0 +1,16 @@
+[
+  { "text": "#tag", "tags": ["tag"] },
+  { "text": "a #tag b #other/nested #with-dash #under_score", "tags": ["tag", "other/nested", "with-dash", "under_score"] },
+  { "text": "# Heading\n## Sub", "tags": [] },
+  { "text": "#123 #1a #a1", "tags": ["1a", "a1"] },
+  { "text": "x#no http://a.com/#frag", "tags": [] },
+  { "text": "#émoji #日本語", "tags": ["émoji", "日本語"] },
+  { "text": "`#code` ```#inline```\n```\n#fenced\n```\n#yes", "tags": ["yes"] },
+  { "text": "para ```\n``` #info-string-opens-a-fence\n#inside", "tags": [] },
+  { "text": "%% #hidden %% $#math$ #shown", "tags": ["shown"] },
+  { "text": "---\ntags: [one, '#two']\n---\n#three", "tags": ["one", "two", "three"] },
+  { "text": "---\ntags: one, two three\n---\n", "tags": ["one", "two", "three"] },
+  { "text": "---\ntag: single\n---\n", "tags": ["single"] },
+  { "text": "---\ntags:\n  - a\n  - b\n---\n", "tags": ["a", "b"] },
+  { "text": "---\ntitle: '#notatag'\n---\n", "tags": [] }
+]

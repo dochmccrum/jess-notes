@@ -53,6 +53,9 @@ impl Rng {
     }
 }
 
+/// Docs edited in the push, and each other doc's link resolutions before it.
+type RPre = (HashSet<Id>, HashMap<Id, Vec<Option<Id>>>);
+
 struct Envelope<T> {
     at: u64,
     msg: T,
@@ -477,10 +480,7 @@ impl Sim {
     // ------------------------------------------------------------------ invariant checks
 
     /// Snapshot link resolutions before a push that only renames/moves (Invariant R).
-    fn invariant_r_pre(
-        &mut self,
-        ops: &[jess_core::ops::Op],
-    ) -> Option<(HashSet<Id>, HashMap<Id, Vec<Option<Id>>>)> {
+    fn invariant_r_pre(&mut self, ops: &[jess_core::ops::Op]) -> Option<RPre> {
         let mut edited = HashSet::new();
         let mut has_rename = false;
         for op in ops {
@@ -538,7 +538,7 @@ impl Sim {
         out
     }
 
-    fn invariant_r_post(&mut self, (edited, pre): (HashSet<Id>, HashMap<Id, Vec<Option<Id>>>)) {
+    fn invariant_r_post(&mut self, (edited, pre): RPre) {
         let post = self.resolutions(&edited);
         let e = self.engine.as_ref().unwrap();
         for (doc, before) in pre {
@@ -553,21 +553,19 @@ impl Sim {
             );
             for (i, (b, a)) in before.iter().zip(after).enumerate() {
                 if let Some(target) = b {
-                    if e.ix.contains(target) {
-                        if a != b {
-                            let e = self.engine.as_mut().unwrap();
-                            let text = e.doc_text(doc, SLOT_BODY).unwrap();
-                            let l = &extract(&text).links[i];
-                            let paths: Vec<String> = e
-                                .state
-                                .iter()
-                                .filter(|x| x.is_linkable())
-                                .filter_map(|x| {
-                                    e.state.path_of(x.id).map(|p| format!("{p} {:?}", x.id))
-                                })
-                                .collect();
-                            panic!("seed {}: Invariant R violated in doc {doc:?} (folder {:?}) link #{i} {l:?}: before {b:?} after {a:?}\ntext {text:?}\npaths {paths:#?}\n{}", self.seed, e.state.folder_of(doc), self.trace.join("\n"));
-                        }
+                    if e.ix.contains(target) && a != b {
+                        let e = self.engine.as_mut().unwrap();
+                        let text = e.doc_text(doc, SLOT_BODY).unwrap();
+                        let l = &extract(&text).links[i];
+                        let paths: Vec<String> = e
+                            .state
+                            .iter()
+                            .filter(|x| x.is_linkable())
+                            .filter_map(|x| {
+                                e.state.path_of(x.id).map(|p| format!("{p} {:?}", x.id))
+                            })
+                            .collect();
+                        panic!("seed {}: Invariant R violated in doc {doc:?} (folder {:?}) link #{i} {l:?}: before {b:?} after {a:?}\ntext {text:?}\npaths {paths:#?}\n{}", self.seed, e.state.folder_of(doc), self.trace.join("\n"));
                     }
                 }
             }

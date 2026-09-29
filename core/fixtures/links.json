@@ -1,0 +1,45 @@
+[
+  { "text": "[[Note name]]", "links": [{ "syntax": "wiki", "embed": false, "target": "Note name", "span": "[[Note name]]", "target_span": "Note name" }] },
+  { "text": "a [[Note name|alias]] b", "links": [{ "syntax": "wiki", "embed": false, "target": "Note name", "display": "alias", "span": "[[Note name|alias]]", "target_span": "Note name" }] },
+  { "text": "[[Note name#Heading]]", "links": [{ "syntax": "wiki", "embed": false, "target": "Note name", "subpath": "#Heading", "span": "[[Note name#Heading]]", "target_span": "Note name" }] },
+  { "text": "[[folder/Note name]]", "links": [{ "syntax": "wiki", "embed": false, "target": "folder/Note name", "span": "[[folder/Note name]]", "target_span": "folder/Note name" }] },
+  { "text": "[[file.pdf#page=3]]", "links": [{ "syntax": "wiki", "embed": false, "target": "file.pdf", "subpath": "#page=3", "span": "[[file.pdf#page=3]]", "target_span": "file.pdf" }] },
+  { "text": "![[file.pdf#page=3&height=600]]", "links": [{ "syntax": "wiki", "embed": true, "target": "file.pdf", "subpath": "#page=3&height=600", "span": "![[file.pdf#page=3&height=600]]", "target_span": "file.pdf" }] },
+  { "text": "![[img.png|300x200]]", "links": [{ "syntax": "wiki", "embed": true, "target": "img.png", "display": "300x200", "span": "![[img.png|300x200]]", "target_span": "img.png" }] },
+  { "text": "![[Note#^block-id]]", "links": [{ "syntax": "wiki", "embed": true, "target": "Note", "subpath": "#^block-id", "span": "![[Note#^block-id]]", "target_span": "Note" }] },
+  { "text": "| [[Note\\|alias]] |", "links": [{ "syntax": "wiki", "embed": false, "target": "Note", "display": "alias", "span": "[[Note\\|alias]]", "target_span": "Note" }] },
+  { "text": "[[#Heading only]]", "links": [{ "syntax": "wiki", "embed": false, "target": "", "subpath": "#Heading only", "span": "[[#Heading only]]", "target_span": "" }] },
+  { "text": "[[a [[b]]", "links": [{ "syntax": "wiki", "embed": false, "target": "b", "span": "[[b]]", "target_span": "b" }] },
+  { "text": "[[]] [[ ]]", "links": [] },
+  { "text": "[text](Note%20name.md)", "links": [{ "syntax": "markdown", "embed": false, "target": "Note name.md", "display": "text", "span": "[text](Note%20name.md)", "target_span": "Note%20name.md" }] },
+  { "text": "[t](<../x/Old name.md>)", "links": [{ "syntax": "markdown", "embed": false, "target": "../x/Old name.md", "display": "t", "span": "[t](<../x/Old name.md>)", "target_span": "../x/Old name.md" }] },
+  { "text": "![alt|300](assets/img.PNG)", "links": [{ "syntax": "markdown", "embed": true, "target": "assets/img.PNG", "display": "alt|300", "span": "![alt|300](assets/img.PNG)", "target_span": "assets/img.PNG" }] },
+  { "text": "![](f.pdf#page=2)", "links": [{ "syntax": "markdown", "embed": true, "target": "f.pdf", "subpath": "#page=2", "display": "", "span": "![](f.pdf#page=2)", "target_span": "f.pdf" }] },
+  { "text": "[t](a.md \"title\")", "links": [{ "syntax": "markdown", "embed": false, "target": "a.md", "display": "t", "span": "[t](a.md \"title\")", "target_span": "a.md" }] },
+  { "text": "[t](a_(b).md)", "links": [{ "syntax": "markdown", "embed": false, "target": "a_(b).md", "display": "t", "span": "[t](a_(b).md)", "target_span": "a_(b).md" }] },
+  { "text": "[![img](i.png)](Note.md)", "links": [
+      { "syntax": "markdown", "embed": false, "target": "Note.md", "display": "![img](i.png)", "span": "[![img](i.png)](Note.md)", "target_span": "Note.md" },
+      { "syntax": "markdown", "embed": true, "target": "i.png", "display": "img", "span": "![img](i.png)", "target_span": "i.png" }
+  ] },
+  { "text": "[ext](https://example.com/a.md) ![r](http://x/y.png) [m](mailto:a@b) [anchor](#h)", "links": [] },
+  { "text": "`[[code]]` ``[[also `code`]]`` [[real]]", "links": [{ "syntax": "wiki", "embed": false, "target": "real", "span": "[[real]]", "target_span": "real" }] },
+  { "text": "```\n[[fenced]]\n```\n~~~md\n[[tilde]]\n~~~\n[[after]]", "links": [{ "syntax": "wiki", "embed": false, "target": "after", "span": "[[after]]", "target_span": "after" }] },
+  { "text": "text\n\n    [[indented code]]\n\n[[after]]", "links": [{ "syntax": "wiki", "embed": false, "target": "after", "span": "[[after]]", "target_span": "after" }] },
+  { "text": "para\n    [[continuation, not code]]", "links": [{ "syntax": "wiki", "embed": false, "target": "continuation, not code", "span": "[[continuation, not code]]", "target_span": "continuation, not code" }] },
+  { "text": "%%[[hidden]]%% [[shown]] %%\nmulti\n\n[[still hidden]]\n%% [[shown2]]", "links": [
+      { "syntax": "wiki", "embed": false, "target": "shown", "span": "[[shown]]", "target_span": "shown" },
+      { "syntax": "wiki", "embed": false, "target": "shown2", "span": "[[shown2]]", "target_span": "shown2" }
+  ] },
+  { "text": "$[[in math]]$ $$[[display]]$$ [[out]]", "links": [{ "syntax": "wiki", "embed": false, "target": "out", "span": "[[out]]", "target_span": "out" }] },
+  { "text": "costs $5 and [[x]] $10", "links": [{ "syntax": "wiki", "embed": false, "target": "x", "span": "[[x]]", "target_span": "x" }] },
+  { "text": "\\[[escaped]] [[yes]]", "links": [{ "syntax": "wiki", "embed": false, "target": "yes", "span": "[[yes]]", "target_span": "yes" }] },
+  { "text": "---\ntags: [a]\nup: \"[[Parent]]\"\n---\n[[Body]]", "links": [
+      { "syntax": "wiki", "embed": false, "target": "Parent", "span": "[[Parent]]", "target_span": "Parent" },
+      { "syntax": "wiki", "embed": false, "target": "Body", "span": "[[Body]]", "target_span": "Body" }
+  ] },
+  { "text": "😀 [[Ünï]]\r\n[[crlf]]\r\n", "links": [
+      { "syntax": "wiki", "embed": false, "target": "Ünï", "span": "[[Ünï]]", "target_span": "Ünï" },
+      { "syntax": "wiki", "embed": false, "target": "crlf", "span": "[[crlf]]", "target_span": "crlf" }
+  ] },
+  { "text": "[[ spaced ]]", "links": [{ "syntax": "wiki", "embed": false, "target": "spaced", "span": "[[ spaced ]]", "target_span": "spaced" }] }
+]

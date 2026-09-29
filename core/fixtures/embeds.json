@@ -1,0 +1,15 @@
+{
+  "sizes": [
+    { "display": "300", "alt": null, "size": [300, null] },
+    { "display": "300x200", "alt": null, "size": [300, 200] },
+    { "display": "alt|300", "alt": "alt", "size": [300, null] },
+    { "display": "alt text", "alt": "alt text", "size": null },
+    { "display": "a|b|120x80", "alt": "a|b", "size": [120, 80] }
+  ],
+  "pdf": [
+    { "subpath": "#page=3", "page": 3, "height": null },
+    { "subpath": "#page=3&height=600", "page": 3, "height": 600 },
+    { "subpath": "#height=400", "page": null, "height": 400 },
+    { "subpath": "#Heading", "page": null, "height": null }
+  ]
+}

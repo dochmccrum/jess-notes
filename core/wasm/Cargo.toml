@@ -8,4 +8,6 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-jess-core = { path = "..", package = "jess-core", default-features = false, features = ["wasm"] }
+jess-core = { path = "..", default-features = false, features = ["wasm"] }
+wasm-bindgen = "0.2"
+serde_json.workspace = true

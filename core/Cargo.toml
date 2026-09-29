@@ -12,7 +12,6 @@ wasm = []
 [dependencies]
 yrs = { workspace = true, optional = true }
 minicbor.workspace = true
-uuid.workspace = true
 unicode-normalization.workspace = true
 sha2.workspace = true
 hex.workspace = true

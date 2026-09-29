@@ -1,0 +1,12 @@
+{
+  "name": "jess-yjs-compat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "node gen.mjs",
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "yjs": "13.6.27"
+  }
+}

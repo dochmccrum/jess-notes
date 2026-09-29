@@ -14,8 +14,12 @@ pub const VAULT_SETTINGS_ID: Id = Id([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 impl Id {
     /// A UUIDv7 from a unix-ms timestamp and 10 random bytes (sans-IO: the caller supplies randomness).
     pub fn new_v7(unix_ms: u64, rand: [u8; 10]) -> Id {
-        let u = uuid::Builder::from_unix_timestamp_millis(unix_ms, &rand).into_uuid();
-        Id(*u.as_bytes())
+        let mut b = [0u8; 16];
+        b[..6].copy_from_slice(&unix_ms.to_be_bytes()[2..]);
+        b[6..].copy_from_slice(&rand);
+        b[6] = 0x70 | (b[6] & 0x0f); // version 7
+        b[8] = 0x80 | (b[8] & 0x3f); // RFC 4122 variant
+        Id(b)
     }
     /// Deterministic id derived from arbitrary bytes (used for server-generated trash batch ids).
     pub fn derive(parts: &[&[u8]]) -> Id {

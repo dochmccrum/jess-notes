@@ -1,0 +1,18 @@
+[
+  { "text": "$x$", "math": [{ "span": "$x$", "display": false }] },
+  { "text": "costs $5 and $10", "math": [] },
+  { "text": "$ x$ and $x $", "math": [] },
+  { "text": "$a$b", "math": [{ "span": "$a$", "display": false }] },
+  { "text": "$a$5", "math": [] },
+  { "text": "\\$not$ and $e^{i\\pi}$", "math": [{ "span": "$e^{i\\pi}$", "display": false }] },
+  { "text": "$\\$5$", "math": [{ "span": "$\\$5$", "display": false }] },
+  { "text": "$a\nb$", "math": [{ "span": "$a\nb$", "display": false }] },
+  { "text": "$a\n\nb$", "math": [] },
+  { "text": "`$x$` $y$", "math": [{ "span": "$y$", "display": false }] },
+  { "text": "```\n$$\nx\n$$\n```", "math": [] },
+  { "text": "$$\n\\int_0^1 x\\,dx\n$$\nafter", "math": [{ "span": "$$\n\\int_0^1 x\\,dx\n$$", "display": true }] },
+  { "text": "$$x^2$$", "math": [{ "span": "$$x^2$$", "display": true }] },
+  { "text": "text $$x$$ inline", "math": [{ "span": "$$x$$", "display": true }] },
+  { "text": "$$\nunterminated [[link]]", "math": [] },
+  { "text": "$$ $$", "math": [{ "span": "$$ $$", "display": true }] }
+]
