@@ -8,3 +8,5 @@ target/
 ui/src/wasm/
 ui/test-results/
 ui/playwright-report/
+!tests/fixtures/vault/.DS_Store
+!tests/fixtures/vault/**/.DS_Store
