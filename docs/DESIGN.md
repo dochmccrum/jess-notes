@@ -54,7 +54,7 @@ Everything else is my call. It's recorded below with reasoning, and you can over
                         │   └─ Blob GC                                                                    │
                         └────────────────────────────────────────────────────────────────────────────────┘
 
- Web client                                            Tauri client (Linux / Android / iPadOS)
+ Web client                                            Tauri client (Linux / Android)
  ┌──────────── main thread ─────────────┐              ┌──────────── WebView (same ui/ bundle) ─────────┐
  │ Svelte 5 shell, sidebar, panels      │              │ identical UI                                    │
  │ CodeMirror 6 + y-codemirror (open doc)│             │                                                 │
@@ -87,7 +87,7 @@ tools/vaultgen/       seeded vault generator for benchmarks
 tests/fixtures/vault/ awkward Obsidian fixture vault (round-trip CI test)
 tests/e2e/            Playwright
 bench/                benchmark harness + budgets.json
-docs/                 DESIGN.md, DEPLOY.md, PROTOCOL.md (generated from core types), MAC.md (phase 7)
+docs/                 DESIGN.md, DEPLOY.md, PROTOCOL.md (generated from core types), MAC.md (only if the iPadOS app is picked up)
 ```
 
 Package manager: pnpm through corepack (it isn't installed on this machine yet, but corepack comes with Node 22). Rust uses a single cargo workspace.
@@ -753,7 +753,7 @@ The projection is shared by export, the server mirror, integrity-check and the t
 
 - **Tauri 2 Linux**: WebKitGTK. Everything heavy is native, so the WebView only needs ES2020 plus CSS custom properties. WebKitGTK support is checked for `OffscreenCanvas` (local thumbnails fall back to Rust anyway), `ResizeObserver` and `IntersectionObserver`. Packaged as AppImage and deb.
 - **Android**: the system WebView (target: Chromium 100+ in CI, with a documented minimum). The Rust core, SQLite and file blobs are native. The photo picker uses the Tauri dialog/file plugins. The keyboard-aware editor uses `visualViewport` resize with `interactive-widget=resizes-content`. Back gesture handling is described in §11.5.
-- **iPadOS**: WKWebView. HEIC conversion on paste uses WebKit's decode through a canvas, and a Swift plugin for ImageIO is optional later. Pencil input works as a pointer (no drawing). Hardware keyboard shortcuts go through the keybinding registry (Cmd). **What you'll need on a Mac** (details in docs/MAC.md, phase 7): Xcode, an Apple ID with a paid Developer Program membership to install on a real iPad for more than 7 days, `rustup target add aarch64-apple-ios`, `pnpm tauri ios init`, `pnpm tauri ios build`, signing set in Xcode. The iOS target will be kept compiling in config from phase 5 onwards.
+- **iPadOS** (not scheduled: possible later, see §21): WKWebView. HEIC conversion on paste uses WebKit's decode through a canvas, and a Swift plugin for ImageIO is optional later. Pencil input works as a pointer (no drawing). Hardware keyboard shortcuts go through the keybinding registry (Cmd). **What you'll need on a Mac** (details in docs/MAC.md, phase 7): Xcode, an Apple ID with a paid Developer Program membership to install on a real iPad for more than 7 days, `rustup target add aarch64-apple-ios`, `pnpm tauri ios init`, `pnpm tauri ios build`, signing set in Xcode. The iOS target will be kept compiling in config from phase 5 onwards.
 - **Cold start on Android** is dominated by WebView initialisation (about 150–300 ms on mid-range devices). The <500 ms target is measured from `Activity.onCreate` to the `note-visible` mark. That's the riskiest performance target, and phase 8 may need a native splash plus pre-warming.
 
 ---
@@ -857,10 +857,14 @@ Everything else is small: axum, tokio, rusqlite, sha2, minicbor, argon2, saphyr,
 2. Projection, import/export engine, mirror + git, round-trip and mirror tests.
 3. Web app shell, sidebar (3 modes), editor (wikilinks, maths, live preview), backlinks, tags, search, import/export UI, sync status, Dockerfile, DEPLOY.md.
 4. Images and PDFs in the UI, PDF text search, attachments manager, blob progress.
-5. Tauri Linux (native SQLite, file blobs, native folder import/export); iOS config kept compiling.
+5. Tauri Linux (native SQLite, file blobs, native folder import/export).
 6. Android.
-7. iPadOS preparation + docs/MAC.md.
-8. Performance pass against §18, then polish.
+7. Performance pass against §18, then polish.
+
+**Plan change (owner, 2026-09-30):** the iPadOS phase (originally 7, "iPadOS preparation +
+docs/MAC.md") is dropped from the plan and kept as a possibility for later (see "Possible later"
+in `docs/PHASES.md`). The web app still supports iPad Safari. Performance + polish becomes
+phase 7. Nothing already built changes: the shared mobile entry point stays for Android.
 
 Each phase ends with tests passing, a commit pushed to `origin/main` (github.com/dochmccrum/jess-notes, private), and a short summary in `docs/PHASES.md`.
 
@@ -998,7 +1002,7 @@ each tightens a rule the simulation showed was underspecified.
     don't re-read IndexedDB. Measured (dev machine, Chromium, bytes local): a 5 MB PDF whose first
     page holds a 5 MB image shows page 1 in 250–270 ms; a note with 50 images opens in 16–21 ms.
 34. **Web blob storage is IndexedDB chunk records only** in this phase (the OPFS SyncAccessHandle
-    path from §7.5 is deferred to the phase 8 performance pass); the service worker reads the same
+    path from §7.5 is deferred to the phase 7 performance pass); the service worker reads the same
     records. Until the server's display variant exists, `/_blob/…/display` falls back to the
     original bytes (which are local on the pasting device) instead of generating a thumbnail locally.
 35. **Offline attachments policy** lives in the worker: `everything` queues every missing blob at
@@ -1049,5 +1053,5 @@ each tightens a rule the simulation showed was underspecified.
     instead of failing.
 47. **Linux packages:** `.deb` (~10 MB) and AppImage (~116 MB; it bundles WebKitGTK). The CI job
     `linux-app` builds both and runs the WebDriver smoke test (`apps/tauri/e2e/smoke.mjs`) under
-    Xvfb. The iOS/Android build of the same crate (the `mobile_entry_point` is in place) needs
-    the Apple toolchain or the Android NDK, so it is first compiled in phases 6 and 7.
+    Xvfb. The Android build of the same crate (the `mobile_entry_point` is in place) needs the
+    Android NDK, so it is first compiled in phase 6.

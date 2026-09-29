@@ -3,7 +3,7 @@
 Read this first. It is written for any coding agent (Claude, Codex, Gemini, …) picking up the project.
 
 ## What this is
-A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted Rust sync server that also serves the web UI. Clients: web, Linux, Android, iPadOS (Tauri 2). Single user, a few devices.
+A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted Rust sync server that also serves the web UI. Clients: web, Linux and Android (Tauri 2). An iPadOS app is a possibility for later, not in the plan. Single user, a few devices.
 
 ## Documents (in priority order)
 1. `docs/DESIGN.md` — **approved design; follow it.** All decisions D1–D11 in its §0 were accepted by the owner as recommended. Do not re-litigate them.
@@ -38,4 +38,4 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 ## Environment notes
 - Dev machine: Fedora Linux; rustc/cargo 1.93, Node 22, git, docker + podman available. pnpm is **not** installed and Fedora's Node has no `corepack`: use `npx -y pnpm@12.8.1 …`. WebKitGTK dev packages and WebKitWebDriver are installed; binaryen via Homebrew; no Xvfb (the smoke test opens windows on the real display) and no Android NDK yet.
 - Deployment target: Coolify (Traefik terminates TLS). CI assumed to be GitHub Actions.
-- iPadOS builds need the owner's Mac; produce `docs/MAC.md` instructions in Phase 7.
+- iPadOS is not in the plan (owner, 2026-09-30); if it's picked up later, builds need the owner's Mac and a `docs/MAC.md`.

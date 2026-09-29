@@ -1,6 +1,6 @@
 # Jess Notes
 
-A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted sync server (Rust) that also serves the web app. Clients: web, Linux, Android, iPadOS (Tauri 2).
+A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted sync server (Rust) that also serves the web app. Clients: web, Linux and Android (Tauri 2); an iPadOS app may come later.
 
 Status: design approved; implementation starting at Phase 1.
 
