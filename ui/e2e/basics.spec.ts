@@ -76,3 +76,18 @@ test('a second tab is gated', async ({ context }) => {
   await expect(p2.getByTestId('sync-status')).toBeVisible({ timeout: 15_000 })
   await expect(p1.getByTestId('blocked')).toBeVisible({ timeout: 15_000 })
 })
+
+test('erase this device: local data gone, vault intact on the server', async ({ page }) => {
+  await login(page)
+  const name = `Survivor ${Date.now()}`
+  await newNote(page, name)
+  await page.keyboard.type('still here')
+  await expect(page.getByTestId('sync-status')).toHaveText(/Synced/)
+  await page.getByTestId('open-settings').click()
+  await page.getByTestId('erase').click()
+  await page.getByTestId('erase-confirm').click()
+  await expect(page.getByTestId('password')).toBeVisible({ timeout: 15_000 })
+  await login(page)
+  await page.getByTestId('tree').getByText(name, { exact: true }).click()
+  await expect(page.locator('.cm-content')).toContainText('still here')
+})

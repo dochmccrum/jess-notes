@@ -4,6 +4,7 @@
   import { createPairing, getToken, listDevices, revokeDevice, setToken } from '../lib/auth'
   import { bindingsFor, get as getCommand } from '../lib/commands'
   import { applyTheme } from '../lib/theme'
+  import { requestErase } from '../lib/erase'
 
   let { app, logout }: { app: AppState; logout(): void } = $props()
   let devices: { id: string; name: string; last_seen: number | null; revoked_at: number | null }[] = $state([])
@@ -37,6 +38,10 @@
     await revokeDevice(token, id)
     devices = await listDevices(token)
   }
+
+  let pending = $state(0)
+  $effect(() => app.backend.sync.subscribe((s) => (pending = s.pending ?? 0)))
+  let erasing = $state(false)
 
   async function doLogout() {
     await setToken(null)
@@ -120,7 +125,20 @@
     <button class="btn" onclick={() => (app.overlay = 'trash')}>Open trash</button>
     <button class="btn" onclick={() => (app.overlay = 'import')}>Import / export…</button>
     <button class="btn danger" onclick={() => void doLogout()}>Log out of this device</button>
+    <button class="btn danger" onclick={() => (erasing = true)} data-testid="erase">Erase this device's local copy…</button>
   </section>
+  {#if erasing}
+    <section class="erase" role="alert">
+      <p>This deletes every note and attachment stored on this device and signs it out. The vault on the server is not touched; sign in again to download it.</p>
+      {#if pending}
+        <p class="warn"><strong>{pending} change{pending === 1 ? ' has' : 's have'} not reached the server yet and will be lost.</strong> Export first (Import / export → Export as .zip) if you need them.</p>
+      {/if}
+      <div class="row">
+        <button class="btn" onclick={() => (erasing = false)}>Cancel</button>
+        <button class="btn danger" onclick={() => requestErase()} data-testid="erase-confirm">Erase and reload</button>
+      </div>
+    </section>
+  {/if}
 </Modal>
 
 <style>
@@ -177,6 +195,14 @@
     flex-wrap: wrap;
   }
   .danger {
+    color: var(--danger);
+  }
+  .erase {
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    padding: 12px;
+  }
+  .warn {
     color: var(--danger);
   }
 </style>

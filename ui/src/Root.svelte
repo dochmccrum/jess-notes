@@ -68,6 +68,7 @@
       saveBoot()
     })
     addEventListener('online', () => a.backend.online())
+    addEventListener('offline', () => a.backend.offline())
     let bootTimer: ReturnType<typeof setTimeout> | undefined
     a.backend.entries.subscribe(() => {
       clearTimeout(bootTimer)

@@ -225,9 +225,21 @@ function probe() {
     ws.send(ping)
     setTimeout(() => void run(() => core.tick(Date.now() + 3000) as Output), 2100)
   } else {
+    // A socket stuck connecting (e.g. opened while the network was down) is replaced now.
+    dropSocket()
     attempt = 0
     connect()
   }
+}
+
+function dropSocket() {
+  const s = ws
+  if (!s) return
+  ws = null
+  s.onclose = null
+  s.onmessage = null
+  s.close()
+  void run(() => core.disconnected() as Output)
 }
 
 // ---------------------------------------------------------------- auth'd fetch
@@ -571,7 +583,7 @@ async function importRun(resolutions: Record<string, 'Overwrite' | 'KeepBoth' | 
         name = i > 0 ? `${name.slice(0, i)} (imported)${name.slice(i)}` : `${name} (imported)`
       }
       if (it.kind === 'Markdown') {
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(readBytes(it.path))
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readBytes(it.path))
         if (res === 'Overwrite' && existing) docs.push([existing, text, true])
         else {
           const id = newIdStr()
@@ -753,6 +765,11 @@ const methods: Record<string, (...a: never[]) => unknown> = {
   online() {
     probe()
   },
+  offline() {
+    // The OS says the network is gone: show it now rather than after the heartbeat timeout.
+    dropSocket()
+    scheduleReconnect()
+  },
   async ingest(file: Blob) {
     return ingestBlob(file)
   },
@@ -783,6 +800,16 @@ const methods: Record<string, (...a: never[]) => unknown> = {
   },
 }
 
+// Calls that arrive before `init` finishes (the UI renders from the boot record first) wait for
+// it, in arrival order.
+let markReady: () => void
+let markFailed: (e: unknown) => void
+const ready = new Promise<void>((res, rej) => {
+  markReady = res
+  markFailed = rej
+})
+ready.catch(() => {})
+
 self.onmessage = async (m: MessageEvent<Req>) => {
   const { id, method, args } = m.data
   const f = methods[method] as ((...a: unknown[]) => unknown) | undefined
@@ -791,6 +818,18 @@ self.onmessage = async (m: MessageEvent<Req>) => {
     return
   }
   try {
+    if (method === 'init') {
+      try {
+        const value = await f(...args)
+        markReady()
+        self.postMessage({ id, ok: true, value })
+      } catch (e) {
+        markFailed(e)
+        throw e
+      }
+      return
+    }
+    await ready
     const value = await f(...args)
     self.postMessage({ id, ok: true, value })
   } catch (e) {

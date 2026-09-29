@@ -75,6 +75,7 @@ export interface Backend {
   on(cb: (e: BackendEvent) => void): () => void
   setForeground(f: boolean): void
   online(): void
+  offline(): void
   flush(): Promise<void>
   setToken(t: string | null): void
   quarantine(): Promise<unknown[]>

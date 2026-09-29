@@ -53,3 +53,48 @@ jobs:
         run: cd core/tests/yjs-compat && node verify.mjs
       - name: Fixtures unchanged
         run: git diff --exit-code core/fixtures
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - name: wasm-bindgen-cli (must match the wasm-bindgen crate)
+        run: cargo install --locked wasm-bindgen-cli --version 0.2.129
+      - run: sudo apt-get update && sudo apt-get install -y binaryen
+      - run: cd ui && pnpm install --frozen-lockfile
+      - run: cd ui && pnpm wasm
+      - run: cd ui && pnpm check
+      - run: cd ui && pnpm test
+      - name: Build + bundle budgets (fails when over)
+        run: cd ui && pnpm build
+      - run: cargo build -p jess-server
+      - run: cd ui && pnpm exec playwright install --with-deps chromium webkit
+      - name: Playwright (Chromium, touch emulation, WebKit)
+        run: cd ui && E2E_WEBKIT=1 pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: ui/test-results
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        run: docker build -t jess:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name jess -p 8080:8080 -e JESS_ADMIN_PASSWORD=ci-password-123 jess:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="app">'
+          docker exec jess jess integrity-check

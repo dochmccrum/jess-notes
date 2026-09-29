@@ -4,7 +4,7 @@ import { register, bind, applyOverrides, type CommandContext } from './lib/comma
 import type { AppState } from './stores/app.svelte'
 
 export function registerCommands(app: AppState) {
-  const target = (ctx: CommandContext) => ctx.target ?? app.treeFocus ?? app.active
+  const target = (ctx: CommandContext) => ctx.target ?? app.focusTarget()
   const entry = (ctx: CommandContext) => {
     const id = target(ctx)
     return id ? app.entries.get(id) : undefined

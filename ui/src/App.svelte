@@ -21,6 +21,7 @@
     return app.active && app.entries.get(app.active) ? app.active : null
   })
 
+  // Capture phase: app-level bindings win over the editor's own (as in Obsidian).
   function onKey(e: KeyboardEvent) {
     if (e.defaultPrevented || e.isComposing) return
     if (app.prompt) return
@@ -64,7 +65,7 @@
   ] as const
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydowncapture={onKey} />
 
 <div class="shell" class:pinned={app.device.sidebarMode === 'pinned'}>
   <Sidebar {app}>

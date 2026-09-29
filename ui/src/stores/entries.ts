@@ -58,10 +58,8 @@ export class EntryStore {
     }
     for (const p of parents) this.kidsDirty.add(p)
     // Folder moves/renames change descendants' paths.
-    for (const id of changed) {
-      const e = this.entries.get(id)
-      if (e?.kind === 'folder') for (const d of this.descendants(id)) this.index(this.entries.get(d)!)
-    }
+    const folders = changed.filter((id) => this.entries.get(id)?.kind === 'folder')
+    if (folders.length) for (const d of this.descendantsOf(folders)) this.index(this.entries.get(d)!)
     this.bump(changed, false)
   }
 
@@ -118,22 +116,29 @@ export class EntryStore {
   }
 
   descendants(id: string): string[] {
+    return this.descendantsOf([id])
+  }
+
+  descendantsOf(ids: string[]): string[] {
+    // One pass to index children, then a walk: O(n) however deep or wide the subtree is.
+    const byParent = new Map<string, string[]>()
+    for (const e of this.entries.values()) {
+      if (e.purged || !e.parent) continue
+      const v = byParent.get(e.parent)
+      if (v) v.push(e.id)
+      else byParent.set(e.parent, [e.id])
+    }
     const out: string[] = []
-    const stack = [id]
+    const stack = [...ids]
+    const seen = new Set(ids)
     while (stack.length) {
-      const x = stack.pop()!
-      for (const c of this.allChildren(x)) {
+      for (const c of byParent.get(stack.pop()!) ?? []) {
+        if (seen.has(c)) continue
+        seen.add(c)
         out.push(c)
         stack.push(c)
       }
     }
-    return out
-  }
-
-  /** All non-purged children (live and trashed), unsorted. */
-  private allChildren(parent: string | null): string[] {
-    const out: string[] = []
-    for (const e of this.entries.values()) if (e.parent === parent && !e.purged) out.push(e.id)
     return out
   }
 

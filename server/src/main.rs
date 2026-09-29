@@ -8,7 +8,6 @@ use jess_server::db;
 use jess_server::engine::Engine;
 use jess_server::http::{self, App};
 use jess_server::writer::Writer;
-use std::collections::HashMap;
 use std::io::BufRead;
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -35,12 +34,13 @@ fn main() -> ExitCode {
         "reset-password" => reset_password(cfg),
         "gc" => gc(cfg, flag("--dry-run")),
         "rebuild-mirror" => rebuild_mirror(cfg),
+        "health" => health(&cfg),
         "version" | "--version" => {
             println!("jess {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         _ => {
-            eprintln!("usage: jess [serve | integrity-check [--hashes] [--mirror] | rebuild-mirror | snapshot | reset-password | gc --dry-run]");
+            eprintln!("usage: jess [serve | integrity-check [--hashes] [--mirror] | rebuild-mirror | snapshot | reset-password | gc --dry-run | health]");
             return ExitCode::from(2);
         }
     };
@@ -50,6 +50,26 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Container healthcheck: GET /healthz on the local port (no curl in the image).
+fn health(cfg: &Config) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let addr = SocketAddr::from(([127, 0, 0, 1], cfg.port));
+    let mut s = std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(3))
+        .map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
+    s.write_all(b"GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .map_err(|e| e.to_string())?;
+    let mut buf = [0u8; 32];
+    let n = s.read(&mut buf).map_err(|e| e.to_string())?;
+    let head = String::from_utf8_lossy(&buf[..n]);
+    if head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200") {
+        Ok(())
+    } else {
+        Err(format!("unhealthy: {}", head.lines().next().unwrap_or("")))
     }
 }
 
@@ -178,7 +198,6 @@ fn serve(cfg: Config) -> Result<(), String> {
         status: Mutex::new(Default::default()),
         mirror: Default::default(),
     });
-    let _ = HashMap::<u8, u8>::new();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

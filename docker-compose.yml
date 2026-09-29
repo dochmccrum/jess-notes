@@ -1,0 +1,23 @@
+# Minimal local/production compose file. On Coolify, point a "Docker Compose" resource at this
+# repository (or use the Dockerfile directly) and attach your domain; Traefik terminates TLS.
+services:
+  jess:
+    build: .
+    image: jess-notes:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - jess-data:/data
+    environment:
+      # Optional: set the vault password up front instead of using the one-time setup code
+      # printed in the log on first start.
+      # JESS_ADMIN_PASSWORD: change-me
+      # Optional: push the plain-files mirror to a private git remote (see docs/DEPLOY.md).
+      # JESS_GIT_REMOTE: git@github.com:you/notes-backup.git
+      JESS_TRUST_PROXY: "true"
+      RUST_LOG: info
+    stop_grace_period: 30s
+
+volumes:
+  jess-data:

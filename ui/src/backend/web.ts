@@ -130,6 +130,9 @@ export class WebBackend implements Backend {
   online() {
     void this.call('online')
   }
+  offline() {
+    void this.call('offline')
+  }
   flush() {
     return this.call<void>('flush')
   }

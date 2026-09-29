@@ -8,8 +8,8 @@ Update the **Status** line and tick boxes as work lands. Each phase ends with: a
 | 0 | Design doc | ✅ done (approved 2026-09-29) |
 | 1 | core + server + sync protocol + blob store/channel + simulation suite (no UI) | ✅ done |
 | 2 | projection, import/export engine, server mirror + git | ✅ done |
-| 3 | web app + Dockerfile + DEPLOY.md | ⏳ next |
-| 4 | images & PDFs in the UI | ☐ |
+| 3 | web app + Dockerfile + DEPLOY.md | ✅ done |
+| 4 | images & PDFs in the UI | ⏳ next |
 | 5 | Tauri Linux | ☐ |
 | 6 | Android | ☐ |
 | 7 | iPadOS (prep + docs/MAC.md) | ☐ |
@@ -46,17 +46,17 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 - [x] Tests: mirror == projection after random op sequences (driven by sim), kill mid-write, rename/delete/collision, mirror-blocked doesn't affect sync latency.
 
 ## Phase 3 — web app + Docker + DEPLOY.md
-- [ ] `ui/` Svelte 5 + TS + Vite SPA, pnpm (via corepack). Backend interface + WebBackend (worker + core WASM + Yjs + IDB) + MemoryBackend (§11.2).
-- [ ] Cold-start boot record path (§11.7); single active tab (D9, §11.6); service worker (app shell).
-- [ ] Sidebar: three modes, touch drawer, virtualised ARIA tree, context menu, per-device settings (§11.5).
-- [ ] Commands + keybinding registries, command palette, quick switcher (§11.4, §11.6).
-- [ ] Editor: CodeMirror 6 + y-codemirror, live preview, Lezer extensions, renderer registry, maths via lazy KaTeX, wikilinks + autocomplete, transclusion placeholder, text fidelity (D11) (§10).
-- [ ] Backlinks, tags panel, basic search (sqlite-wasm FTS5, lazy), sync status indicator.
-- [ ] Setup/login/pairing screens; import/export UI with dry run + report.
-- [ ] Vitest (parsers against shared fixtures, storage/sync layer), component tests (sidebar modes & timing, tree keyboard, switcher), Playwright (Chromium + WebKit) for the flows in SPEC "Testing".
-- [ ] Bundle budget check in CI (`bench/budgets.json`).
-- [ ] Dockerfile (multi-stage, pdfium, git, openssh-client, tini, non-root), docker-compose.yml, `DEPLOY.md` (Coolify steps, sizing, proxy limits, migrating a vault, git remote).
-- [ ] Run a KaTeX-compatibility scan against the owner's vault maths (DESIGN §20.6) and report.
+- [x] `ui/` Svelte 5 + TS + Vite SPA, pnpm (via corepack). Backend interface + WebBackend (worker + core WASM + Yjs + IDB) + MemoryBackend (§11.2).
+- [x] Cold-start boot record path (§11.7); single active tab (D9, §11.6); service worker (app shell).
+- [x] Sidebar: three modes, touch drawer, virtualised ARIA tree, context menu, per-device settings (§11.5).
+- [x] Commands + keybinding registries, command palette, quick switcher (§11.4, §11.6).
+- [x] Editor: CodeMirror 6 + y-codemirror, live preview, Lezer extensions, renderer registry, maths via lazy KaTeX, wikilinks + autocomplete, transclusion placeholder, text fidelity (D11) (§10).
+- [x] Backlinks, tags panel, basic search (sqlite-wasm FTS5, lazy), sync status indicator.
+- [x] Setup/login/pairing screens; import/export UI with dry run + report.
+- [x] Vitest (parsers against shared fixtures, storage/sync layer), component tests (sidebar modes & timing, tree keyboard, switcher), Playwright for the flows in SPEC "Testing". *Chromium + touch emulation run locally; WebKit is configured for CI (`E2E_WEBKIT=1`) but could not be run in this environment.*
+- [x] Bundle budget check in CI (`bench/budgets.json`).
+- [x] Dockerfile (multi-stage, git, openssh-client, tini, non-root), docker-compose.yml, `DEPLOY.md` (Coolify steps, sizing, proxy limits, migrating a vault, git remote). *pdfium moves to phase 4 with the derivation subprocess that uses it (DESIGN §22.27).*
+- [x] KaTeX-compatibility scan: `ui/scripts/katex-scan.mjs <vault>` written and run on the fixture vault (2/2 spans render). **The owner's vault isn't available to this session — run it on the real vault and send the output.**
 
 ## Phase 4 — images & PDFs in the UI
 - [ ] Paste / insert attachment / OS drop; instant placeholder; worker ingest; Obsidian naming; HEIC→JPEG on Apple (§7.3).

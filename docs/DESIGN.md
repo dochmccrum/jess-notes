@@ -940,3 +940,36 @@ each tightens a rule the simulation showed was underspecified.
     client that hasn't synced), applying the attachment settings is a warning, not a failure.
 17. **GC never deletes a blob file modified in the last hour**, closing a race with server-side import
     (file installed, row not yet recorded).
+18. **Web import executes in TypeScript; planning stays in core.** The worker asks core (WASM) for
+    the plan (paths, kinds, visibility, conflicts, settings) and then issues ordinary meta ops and
+    Yjs updates in batches of 250. Keeping execution in the worker avoids marshalling every file
+    body across the WASM boundary twice; the semantics that matter (what is imported where, and how
+    conflicts resolve) are still core's. Text is decoded with `ignoreBOM: true` so BOMs survive
+    (caught by the in-browser byte-for-byte round-trip e2e test).
+19. **Worker calls wait for `init`.** The UI renders the tree from the IndexedDB boot record before
+    the worker is ready; any call (opening a note, typing) that arrives first is queued behind
+    `init`, in arrival order. Measured on the dev machine: reload → last note visible ≈ 150 ms;
+    opening a note 7–23 ms.
+20. **App keybindings run in the capture phase**, before the editor's own keymap, as in Obsidian:
+    a user-bound app shortcut always wins. Commands that act on "the current item" use the tree's
+    selection only while the tree has keyboard focus, otherwise the open note.
+21. **Link autocomplete applies on Enter immediately** (`interactionDelay: 0`), matching Obsidian.
+22. **Rarely used panels (palette, settings, import/export, trash) are separate chunks,
+    prefetched when the app is idle**, so opening one is instant and keystrokes typed right after
+    the shortcut are not lost.
+23. **`online`/`offline` events act immediately:** `offline` drops the socket (status shows
+    Offline at once, instead of after the heartbeat timeout); `online` replaces a socket that is
+    stuck connecting and reconnects with the backoff reset.
+24. **Erase this device's local copy** (Settings) deletes IndexedDB and OPFS on the next load,
+    before anything opens them, keeping only device preferences. It warns with the count of
+    changes not yet on the server. It is also the documented recovery path after a server snapshot
+    restore, when devices refuse to sync with a server that is behind them (DEPLOY.md §6).
+25. **Login rate limit is configurable** (`JESS_LOGIN_RATE_PER_MINUTE`, default 5 as specified);
+    the e2e suite raises it because every browser context signs in as a new device.
+26. **`jess health`** is a tiny HTTP check used by the image's `HEALTHCHECK` (the runtime image
+    has no curl). The Dockerfile takes `--build-arg REGISTRY=…` for a Docker Hub mirror.
+27. **pdfium is added to the image in phase 4** together with the derivation subprocess that uses
+    it; the phase 3 image has no PDF processing.
+28. **Service worker precache list** is injected into `sw.js` after the build
+    (`scripts/sw-manifest.mjs`); navigations are network-first with a 2.5 s timeout and fall back
+    to the cached shell, hashed assets are cache-first, `/api/*` is never intercepted.

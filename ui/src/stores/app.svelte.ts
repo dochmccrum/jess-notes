@@ -83,9 +83,15 @@ export class AppState {
     return new Set(this.entries.liveChildren(parent).map((c) => nfc(this.entries.get(c)!.name)))
   }
 
+  /** The tree's selection while the tree has keyboard focus, else the open note. */
+  focusTarget(): string | null {
+    const inTree = typeof document !== 'undefined' && !!document.activeElement?.closest('[role="tree"]')
+    return (inTree ? this.treeFocus : null) ?? this.active
+  }
+
   /** The folder new notes go into, based on the active note. */
   contextFolder(target?: string | null): string | null {
-    const id = target ?? this.treeFocus ?? this.active
+    const id = target ?? this.focusTarget()
     if (!id) return null
     const e = this.entries.get(id)
     if (!e) return null

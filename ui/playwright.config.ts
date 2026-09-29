@@ -21,8 +21,9 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /@touch/ },
     { name: 'touch', use: { ...devices['Pixel 7'] }, grep: /@touch/ },
+    ...(process.env.E2E_WEBKIT ? [{ name: 'webkit', use: { ...devices['Desktop Safari'] }, grepInvert: /@touch|@chromium-only/ }] : []),
   ],
   webServer: {
     command: `${bin} serve`,

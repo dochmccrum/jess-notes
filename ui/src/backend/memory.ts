@@ -88,6 +88,7 @@ export class MemoryBackend implements Backend {
   }
   setForeground() {}
   online() {}
+  offline() {}
   async flush() {}
   setToken() {}
   async quarantine() {

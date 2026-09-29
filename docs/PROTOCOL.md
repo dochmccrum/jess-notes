@@ -120,6 +120,16 @@ never evicted locally before that.
 `POST /api/auth/logout` · `GET /api/devices` · `POST /api/devices/{id}/revoke`.
 Admin: `GET /api/admin/status`, `GET /api/admin/snapshot/latest`. Health: `GET /healthz`.
 
+## Admin vault I/O (bearer token)
+
+- `GET /api/admin/export.zip[?profile=portable][&trash=true]`: the whole vault as a streamed zip
+  from one consistent read snapshot (Exact names by default; `portable` sanitises for Windows and
+  adds `EXPORT-REPORT.md`).
+- `POST /api/admin/import {zip_hash, conflict?, hide_pdfs_in_attachment_folder?, dry_run?}`:
+  imports a zip previously uploaded through the blob channel (`zip_hash` = its SHA-256).
+  `conflict` is `skip` (default), `keep_both` or `overwrite`; `dry_run: true` returns the plan and
+  report without changing anything. Uses the same core planner as the clients (DESIGN §12.3).
+
 ## Golden encodings (hex)
 
 - `hello`: `8200a100a50001020703617404182a056131`

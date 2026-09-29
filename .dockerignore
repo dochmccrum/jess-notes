@@ -1,0 +1,10 @@
+target
+**/node_modules
+ui/dist
+ui/src/wasm
+ui/test-results
+ui/playwright-report
+.git
+*.db
+*.db-shm
+*.db-wal

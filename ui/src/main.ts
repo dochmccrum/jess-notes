@@ -5,6 +5,7 @@ import Root from './Root.svelte'
 import { readBoot } from './lib/boot'
 import { loadDevice } from './stores/device'
 import { applyTheme } from './lib/theme'
+import { eraseIfRequested } from './lib/erase'
 
 performance.mark('boot-start')
 applyTheme(loadDevice().theme)
@@ -16,6 +17,9 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 // Local data must survive storage pressure (DESIGN §11.7).
 void navigator.storage?.persist?.().catch(() => false)
 
-void readBoot().then((boot) => {
-  mount(Root, { target: document.getElementById('app')!, props: { boot } })
-})
+void eraseIfRequested()
+  .catch((e) => console.error('erase failed', e))
+  .then(readBoot)
+  .then((boot) => {
+    mount(Root, { target: document.getElementById('app')!, props: { boot } })
+  })
