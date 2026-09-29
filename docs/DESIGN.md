@@ -1018,3 +1018,36 @@ each tightens a rule the simulation showed was underspecified.
 39. **The search index has a schema version** (now 2: a `page` column and a `pdfs` table); a
     mismatch drops and rebuilds it. Backlinks, tags and search results refresh on an `indexed`
     event, and answer only after pending edits are indexed.
+
+### Phase 5 (Tauri Linux)
+
+40. **The native backend is its own crate, `apps/native` (`jess-native`), with no Tauri
+    dependency.** It does what the web's sync worker does (core sync client, `app.db` KV store,
+    `index.db`, file blobs, transport, import/export) and emits the same `{ev: …}` events, so
+    `TauriBackend` is a thin IPC mapping and the whole backend is tested headlessly against an
+    in-process server. To allow that, the server's `serve` moved into the library
+    (`jess_server::serve`); `main` only parses the CLI.
+41. **Native transport dependencies:** `tokio-tungstenite` (rustls, webpki roots) for the sync
+    WebSocket and `ureq` for HTTP (long-poll fallback, blob chunks, auth). Both were already in
+    the tree as test dependencies (item 10); on native they are real dependencies. Auth requests
+    go through Rust, so the app needs no CORS on the server.
+42. **IPC shape:** JSON commands mirror `ui/src/backend/tauri.ts`; doc updates and blob bytes
+    travel as raw binary IPC bodies (length-prefixed when batched), and events arrive over one
+    `Channel`. `init` returns a snapshot; events that race ahead of the reply are held and
+    replayed after it, so a stale snapshot never overwrites a newer status.
+43. **Blocking work runs off the IPC and GUI threads** (`spawn_blocking`), and `Native` is opened
+    inside the Tauri async runtime, keeping a runtime handle for tasks started later from other
+    threads.
+44. **Erase this device on native** marks the data directory and deletes it at the next launch,
+    before any store is opened (the stores are open while the app runs).
+45. **No asset compression in the Tauri bundle:** decompressing every script at launch cost
+    cold-start time; the binary is a few MB larger instead.
+46. **Blob transfer refinements found in this phase** (apply to web too): a download the server
+    can't serve yet is *parked* until the blob's row says it's present or the client reconnects
+    (was a hot retry loop); a blob whose size isn't known yet isn't queued until the server's
+    row gives it; export skips an unavailable attachment and lists it in `EXPORT-REPORT.txt`
+    instead of failing.
+47. **Linux packages:** `.deb` (~10 MB) and AppImage (~116 MB; it bundles WebKitGTK). The CI job
+    `linux-app` builds both and runs the WebDriver smoke test (`apps/tauri/e2e/smoke.mjs`) under
+    Xvfb. The iOS/Android build of the same crate (the `mobile_entry_point` is in place) needs
+    the Apple toolchain or the Android NDK, so it is first compiled in phases 6 and 7.

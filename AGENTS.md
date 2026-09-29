@@ -10,11 +10,12 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 2. `docs/SPEC.md` — the owner's original brief, verbatim. Requirements and acceptance targets live here.
 3. `docs/PHASES.md` — phase checklist, current status, and phase log. **Keep it updated.**
 
-## Current state (2026-09-29)
-- Phases 0–4 done (see the Phase log in `docs/PHASES.md`); implementation decisions beyond the approved design are in `docs/DESIGN.md` §22.
-- Next step: Phase 5 (Tauri Linux).
-- Work so far is on branch `claude/fervent-johnson-qjsqyv` (not yet merged to `main`).
-- Build: `cd ui && corepack enable && pnpm install && pnpm wasm && pnpm build`; server `cargo build -p jess-server`; tests `cargo test --workspace`, `cd ui && pnpm test && pnpm e2e` (e2e needs the built UI and `target/debug/jess`; set `JESS_PDFIUM_LIB` for PDF text tests).
+## Current state (2026-09-30)
+- Phases 0–5 done (see the Phase log in `docs/PHASES.md`); implementation decisions beyond the approved design are in `docs/DESIGN.md` §22.
+- Next step: Phase 6 (Android). Its first task is compiling `apps/tauri` for a mobile target at all (never done: needs the Android NDK).
+- All work is on `main` (the old `claude/fervent-johnson-qjsqyv` branch is merged).
+- Build: `cd ui && corepack enable && pnpm install && pnpm wasm && pnpm build` (needs `wasm-bindgen-cli` 0.2.129, the `wasm32-unknown-unknown` target, and `wasm-opt` from binaryen for the real sizes); server `cargo build -p jess-server`; tests `cargo test --workspace`, `SIM_SEEDS=10000 cargo test --release -p jess-server --test sim`, `cd ui && pnpm test && pnpm e2e` (e2e needs the built UI and `target/debug/jess`; set `JESS_PDFIUM_LIB` for PDF tests — CI shows how to fetch `libpdfium.so`).
+- Linux app: `cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage`; smoke test `node apps/tauri/e2e/smoke.mjs target/release/jess-notes-app target/debug/jess` (needs `tauri-driver` 2.1.0 and WebKitWebDriver; `SMOKE_TIMINGS=1` prints cold-start timings).
 
 ## Working rules (from the owner)
 - Build phase by phase. End each phase with all tests passing, a commit, a push to `origin/main`, and a short summary appended to the Phase log in `docs/PHASES.md`.
@@ -35,6 +36,6 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 - Note text stored byte-for-byte including CRLF/BOM; CodeMirror `lineSeparator: "\n"` (D11).
 
 ## Environment notes
-- Dev machine: Fedora Linux; rustc/cargo 1.93, Node 22, git, docker + podman available. pnpm is **not** installed — enable it via `corepack enable`.
+- Dev machine: Fedora Linux; rustc/cargo 1.93, Node 22, git, docker + podman available. pnpm is **not** installed and Fedora's Node has no `corepack`: use `npx -y pnpm@12.8.1 …`. WebKitGTK dev packages and WebKitWebDriver are installed; binaryen via Homebrew; no Xvfb (the smoke test opens windows on the real display) and no Android NDK yet.
 - Deployment target: Coolify (Traefik terminates TLS). CI assumed to be GitHub Actions.
 - iPadOS builds need the owner's Mac; produce `docs/MAC.md` instructions in Phase 7.
