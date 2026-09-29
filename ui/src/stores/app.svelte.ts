@@ -78,11 +78,15 @@ export class AppState {
     return r.ok
   }
 
+  /** Set by Root: keeps the cold-start record's last note current. */
+  onActiveChange: (() => void) | null = null
+
   open(id: string | null, subpath: string | null = null) {
     this.active = id
     this.pendingSubpath = subpath
     this.device.lastNote = id
     this.saveDevice()
+    this.onActiveChange?.()
     if (id) {
       for (const a of this.entries.ancestors(id)) if (!this.device.expanded.includes(a)) this.device.expanded.push(a)
       const h = `#/note/${id}`

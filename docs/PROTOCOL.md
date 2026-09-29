@@ -105,7 +105,7 @@ long-polls up to `wait_s`.
 | `PUT /api/blobs/{hash}/uploads/{id}/chunks/{i}` + `X-Chunk-SHA256`, body = bytes `[i·chunk, …)` | `200`; `404` unknown session; `422` chunk hash mismatch. Idempotent. |
 | `POST /api/blobs/{hash}/uploads/{id}/complete` | `200 {present:true}`; `422` content mismatch (session discarded); `404` unknown |
 | `GET`/`HEAD /api/blobs/{hash}` (+ `Range`) | bytes, `ETag: "<hash>"`, `Cache-Control: private, max-age=31536000, immutable` |
-| `GET /api/blobs/{hash}/derived/{display\|thumb\|pdf-thumb\|pdf-text}` | derived data (phase 4) |
+| `GET /api/blobs/{hash}/derived/{display\|thumb\|pdf-thumb\|pdf-text}` | derived data: JPEG/PNG images; `pdf-text` is JSON `{"pages": ["…"]}` (gzip when accepted). 404 until derived. |
 | `POST /api/blobs/presence` `{hashes:[hex]}` | `{present:[hex]}` |
 
 Chunk size is 4 MiB. Bitmap bit *i* (LSB-first within each byte) = chunk *i* received.
@@ -124,7 +124,7 @@ Admin: `GET /api/admin/status`, `GET /api/admin/snapshot/latest`. Health: `GET /
 
 - `GET /api/admin/export.zip[?profile=portable][&trash=true]`: the whole vault as a streamed zip
   from one consistent read snapshot (Exact names by default; `portable` sanitises for Windows and
-  adds `EXPORT-REPORT.md`).
+  adds `EXPORT-REPORT.txt`).
 - `POST /api/admin/import {zip_hash, conflict?, hide_pdfs_in_attachment_folder?, dry_run?}`:
   imports a zip previously uploaded through the blob channel (`zip_hash` = its SHA-256).
   `conflict` is `skip` (default), `keep_both` or `overwrite`; `dry_run: true` returns the plan and

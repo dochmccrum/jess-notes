@@ -54,6 +54,7 @@
         viewer = new PdfViewer(host!, doc, {
           page: m ? Number(m[1]) : prev.page,
           zoom: prev.zoom ?? 'fit',
+          onFirstPage: () => performance.measure('pdf-first-page', { start: t0 }),
           onState: (s) => {
             st = s
             pageInput = String(s.page)
@@ -62,7 +63,6 @@
         })
         await viewer.init()
         loading = false
-        performance.measure('open-pdf', { start: t0 })
       } catch (e) {
         error = (e as Error).message
         loading = false

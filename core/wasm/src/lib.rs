@@ -5,11 +5,9 @@
 //! Yjs (for doc merging), exactly like the native hosts do with SQLite and yrs.
 
 use jess_core::blobs::{Bitmap, BlobResult, BlobTask};
-use jess_core::client::{Client, Event, Output, Status};
+use jess_core::client::{Client, Event, Output};
 use jess_core::kv::Write;
 use jess_core::links::{extract, Syntax};
-use jess_core::model::{BlobInfo, Entry, PropValue};
-use jess_core::ops::MetaOp;
 use jess_core::proto::{self, ClientMsg, HttpSyncRequest, HttpSyncResponse, ServerMsg};
 use jess_core::resolve::ResolveIndex;
 use jess_core::{Hash, Id};
@@ -34,41 +32,6 @@ fn id_of(s: &str) -> Result<Id, JsValue> {
 
 fn hash_of(s: &str) -> Result<Hash, JsValue> {
     Hash::parse_hex(s).ok_or_else(|| JsValue::from_str("bad hash"))
-}
-
-fn prop_json(v: &PropValue) -> Value {
-    if let Some(s) = v.as_str() {
-        return Value::String(s);
-    }
-    if let Some(b) = v.as_bool() {
-        return Value::Bool(b);
-    }
-    if let Some(i) = v.as_int() {
-        return json!(i);
-    }
-    Value::Null
-}
-
-/// JSON view of an entry for the UI.
-pub fn entry_json(e: &Entry) -> Value {
-    let mut props = serde_json::Map::new();
-    for (k, v) in &e.props {
-        props.insert(k.clone(), prop_json(v));
-    }
-    json!({
-        "id": e.id.to_string(),
-        "kind": e.kind,
-        "parent": e.parent.map(|p| p.to_string()),
-        "name": e.name,
-        "trashed": e.trashed.map(|t| json!({"batch": t.batch.to_string(), "at": t.at})),
-        "visible": e.tree_visible,
-        "blob": e.blob.map(|h| h.to_hex()),
-        "created": e.created_at,
-        "modified": e.modified_at,
-        "purged": e.purged,
-        "seq": e.seq,
-        "props": props,
-    })
 }
 
 fn writes_js(w: Vec<Write>) -> Array {
@@ -128,161 +91,6 @@ fn event_js(e: Event) -> JsValue {
         Event::StatusChanged => set(&o, "t", &"status".into()),
     }
     o.into()
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "op", rename_all = "camelCase")]
-enum OpJson {
-    #[serde(rename_all = "camelCase")]
-    Create {
-        id: String,
-        kind: String,
-        parent: Option<String>,
-        name: String,
-        #[serde(default = "yes")]
-        visible: bool,
-        blob: Option<String>,
-        blob_info: Option<BlobInfoJson>,
-        created: Option<u64>,
-        modified: Option<u64>,
-    },
-    SetParent {
-        id: String,
-        parent: Option<String>,
-    },
-    SetName {
-        id: String,
-        name: String,
-    },
-    SetVisible {
-        id: String,
-        visible: bool,
-    },
-    #[serde(rename_all = "camelCase")]
-    SetBlob {
-        id: String,
-        blob: String,
-        blob_info: Option<BlobInfoJson>,
-    },
-    Trash {
-        id: String,
-    },
-    Restore {
-        target: String,
-    },
-    Purge {
-        id: String,
-    },
-    SetProp {
-        id: String,
-        key: String,
-        value: Option<Value>,
-    },
-    SetTimes {
-        id: String,
-        created: Option<u64>,
-        modified: Option<u64>,
-    },
-}
-
-fn yes() -> bool {
-    true
-}
-
-#[derive(Deserialize, Default)]
-struct BlobInfoJson {
-    size: u64,
-    mime: Option<String>,
-    width: Option<u32>,
-    height: Option<u32>,
-    orientation: Option<u8>,
-}
-
-impl From<BlobInfoJson> for BlobInfo {
-    fn from(b: BlobInfoJson) -> BlobInfo {
-        BlobInfo {
-            size: b.size,
-            mime: b.mime,
-            width: b.width,
-            height: b.height,
-            orientation: b.orientation,
-        }
-    }
-}
-
-fn parse_op(o: OpJson) -> Result<MetaOp, JsValue> {
-    let opt =
-        |p: Option<String>| -> Result<Option<Id>, JsValue> { p.map(|s| id_of(&s)).transpose() };
-    Ok(match o {
-        OpJson::Create {
-            id,
-            kind,
-            parent,
-            name,
-            visible,
-            blob,
-            blob_info,
-            created,
-            modified,
-        } => MetaOp::Create {
-            id: id_of(&id)?,
-            kind,
-            parent: opt(parent)?,
-            name,
-            tree_visible: visible,
-            blob: blob.map(|h| hash_of(&h)).transpose()?,
-            blob_info: blob_info.map(Into::into),
-            created_at: created,
-            modified_at: modified,
-            props: vec![],
-        },
-        OpJson::SetParent { id, parent } => MetaOp::SetParent {
-            id: id_of(&id)?,
-            parent: opt(parent)?,
-        },
-        OpJson::SetName { id, name } => MetaOp::SetName {
-            id: id_of(&id)?,
-            name,
-        },
-        OpJson::SetVisible { id, visible } => MetaOp::SetVisible {
-            id: id_of(&id)?,
-            visible,
-        },
-        OpJson::SetBlob {
-            id,
-            blob,
-            blob_info,
-        } => MetaOp::SetBlob {
-            id: id_of(&id)?,
-            blob: hash_of(&blob)?,
-            blob_info: blob_info.map(Into::into),
-        },
-        OpJson::Trash { id } => MetaOp::Trash { id: id_of(&id)? },
-        OpJson::Restore { target } => MetaOp::Restore {
-            target: id_of(&target)?,
-        },
-        OpJson::Purge { id } => MetaOp::Purge { id: id_of(&id)? },
-        OpJson::SetProp { id, key, value } => MetaOp::SetProp {
-            id: id_of(&id)?,
-            key,
-            value: match value {
-                None | Some(Value::Null) => None,
-                Some(Value::String(s)) => Some(PropValue::str(&s)),
-                Some(Value::Bool(b)) => Some(PropValue::bool(b)),
-                Some(Value::Number(n)) => Some(PropValue::int(n.as_i64().unwrap_or(0))),
-                Some(_) => return Err("unsupported prop value".into()),
-            },
-        },
-        OpJson::SetTimes {
-            id,
-            created,
-            modified,
-        } => MetaOp::SetTimes {
-            id: id_of(&id)?,
-            created,
-            modified,
-        },
-    })
 }
 
 fn blob_task_json(t: &BlobTask) -> Value {
@@ -500,12 +308,7 @@ impl Core {
     /// Meta intents (JSON array of ops); several ops form one atomic group.
     #[wasm_bindgen(js_name = localMeta)]
     pub fn local_meta(&mut self, ops_json: &str, now: f64) -> Result<JsValue, JsValue> {
-        let ops: Vec<OpJson> =
-            serde_json::from_str(ops_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let ops = ops
-            .into_iter()
-            .map(parse_op)
-            .collect::<Result<Vec<_>, _>>()?;
+        let ops = jess_core::json::parse_ops(ops_json).map_err(|e| JsValue::from_str(&e))?;
         match self.c.local_meta(ops, now as u64) {
             Ok(o) => Ok(self.out(o)),
             Err(r) => Err(JsValue::from_str(&format!("{r:?}"))),
@@ -571,31 +374,15 @@ impl Core {
     /// All entries of the optimistic view (JSON array).
     #[wasm_bindgen(js_name = viewJson)]
     pub fn view_json(&self) -> String {
-        let v: Vec<Value> = self.c.view().iter().map(|e| self.entry_view(e)).collect();
-        serde_json::to_string(&v).unwrap_or_default()
-    }
-
-    /// An entry plus what is known about its blob (size, mime, oriented dimensions).
-    fn entry_view(&self, e: &Entry) -> Value {
-        let mut v = entry_json(e);
-        if let Some(f) = e.blob.and_then(|h| self.c.blob_facts(&h)) {
-            v["blobInfo"] = json!({ "size": f.size, "mime": f.mime, "width": f.width, "height": f.height, "orientation": f.orientation });
-        }
-        v
+        serde_json::to_string(&jess_core::json::view(&self.c)).unwrap_or_default()
     }
 
     #[wasm_bindgen(js_name = entriesJson)]
     pub fn entries_json(&self, ids: Array) -> String {
-        let mut v = Vec::new();
-        for i in 0..ids.length() {
-            if let Some(id) = ids.get(i).as_string().and_then(|s| Id::parse(&s)) {
-                match self.c.view().get(&id) {
-                    Some(e) => v.push(self.entry_view(e)),
-                    None => v.push(json!({"id": id.to_string(), "deleted": true})),
-                }
-            }
-        }
-        serde_json::to_string(&v).unwrap_or_default()
+        let ids: Vec<Id> = (0..ids.length())
+            .filter_map(|i| ids.get(i).as_string().and_then(|s| Id::parse(&s)))
+            .collect();
+        serde_json::to_string(&jess_core::json::entries_view(&self.c, &ids)).unwrap_or_default()
     }
 
     #[wasm_bindgen(js_name = pathOf)]
@@ -622,24 +409,12 @@ impl Core {
 
     #[wasm_bindgen(js_name = statusJson)]
     pub fn status_json(&self) -> String {
-        let s = match self.c.status() {
-            Status::Synced => json!({"state": "synced"}),
-            Status::Syncing { pending } => json!({"state": "syncing", "pending": pending}),
-            Status::Offline { pending } => json!({"state": "offline", "pending": pending}),
-            Status::Error(e) => json!({"state": "error", "error": e}),
-        };
-        let p = self.c.blobs.progress();
-        let mut s = s;
-        s["uploads"] = json!({"pending": p.uploads_pending, "total": p.uploads_total});
-        s["downloads"] = json!(p.downloads_pending);
-        s["quarantined"] = json!(self.c.quarantine().count());
-        s.to_string()
+        jess_core::json::status(&self.c).to_string()
     }
 
     #[wasm_bindgen(js_name = quarantineJson)]
     pub fn quarantine_json(&self) -> String {
-        let v: Vec<Value> = self.c.quarantine().map(|q| json!({"opId": q.op.op_id, "reason": format!("{:?}", q.reason), "op": format!("{:?}", q.op.body)})).collect();
-        serde_json::to_string(&v).unwrap_or_default()
+        serde_json::to_string(&jess_core::json::quarantine(&self.c)).unwrap_or_default()
     }
 
     // ------------------------------------------------------------------ blobs
@@ -817,8 +592,12 @@ impl Default for Sha256 {
 /// Blob facts from a file's first bytes (image dimensions, EXIF orientation, mime).
 #[wasm_bindgen(js_name = blobInfo)]
 pub fn blob_info(name: &str, header: &[u8], size: f64) -> String {
-    let b = jess_core::import::blob_info_from_header(name, header, size as u64);
-    json!({"size": b.size, "mime": b.mime, "width": b.width, "height": b.height, "orientation": b.orientation}).to_string()
+    jess_core::json::blob_info(&jess_core::import::blob_info_from_header(
+        name,
+        header,
+        size as u64,
+    ))
+    .to_string()
 }
 
 #[wasm_bindgen(js_name = validateName)]

@@ -22,7 +22,14 @@ Everything lives in `/data`:
 /data/mirror/            the vault as plain files (+ .git if git is enabled)
 /data/mirror-state.db    the mirror's own bookkeeping
 /data/git/               the generated SSH deploy key for the git remote
+/data/derived/           image display variants, thumbnails, PDF thumbnails and text (rebuildable)
 ```
+
+The server derives image variants and PDF thumbnails/text once per file, in a background
+subprocess with CPU/memory limits; progress is in `GET /api/admin/status` → `derive`. PDF work
+needs the pdfium library, which the image includes (`/usr/local/lib/libpdfium.so`; override with
+`JESS_PDFIUM_LIB`). Without it, PDFs still open and render in the apps; they just aren't
+searchable and embeds have no ready-made thumbnail.
 
 Back up the volume (or at least `jess.db`, `blobs/` and `snapshots/`) with whatever your host
 provides. The mirror can always be rebuilt (`jess rebuild-mirror`).

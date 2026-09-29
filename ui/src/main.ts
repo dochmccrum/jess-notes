@@ -6,16 +6,21 @@ import { readBoot } from './lib/boot'
 import { loadDevice } from './stores/device'
 import { applyTheme } from './lib/theme'
 import { eraseIfRequested } from './lib/erase'
+import { isTauri } from './lib/platform'
 
 performance.mark('boot-start')
 applyTheme(loadDevice().theme)
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+// The apps ship their UI and read blobs through `jess-blob://`: no service worker there.
+if (!isTauri && 'serviceWorker' in navigator && import.meta.env.PROD) {
   navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {})
 }
 
+// The apps' backend module loads while the boot record is read (Root imports it on launch).
+if (isTauri) void import('./backend/tauri')
+
 // Local data must survive storage pressure (DESIGN §11.7).
-void navigator.storage?.persist?.().catch(() => false)
+if (!isTauri) void navigator.storage?.persist?.().catch(() => false)
 
 void eraseIfRequested()
   .catch((e) => console.error('erase failed', e))

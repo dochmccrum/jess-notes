@@ -11,7 +11,9 @@
   let hidePdfs = $state(true)
   let busy = $state(false)
   let plan = $state<ImportPlanView | null>(null)
-  let source: ImportSource | null = null
+  type NativeSource = { kind: 'native'; type: 'folder' | 'zip'; path: string }
+  let source: ImportSource | NativeSource | null = null
+  const native = app.backend.native
   let resolutions: Record<string, Res> = $state({})
   let applyAll: Res | '' = $state('')
   let progress: { task: string; done: number; total: number } | null = $state(null)
@@ -28,13 +30,13 @@
   const conflicts = $derived(plan ? plan.items.filter((i) => typeof i.action === 'object' && i.action && 'Conflict' in (i.action as object)) : [])
   const unresolved = $derived(applyAll ? 0 : conflicts.filter((c) => !resolutions[c.path]).length)
 
-  async function planFrom(src: ImportSource) {
+  async function planFrom(src: ImportSource | NativeSource) {
     source = src
     error = null
     result = null
     busy = true
     try {
-      plan = await app.backend.importer.plan(src, { hidePdfs, conflict: 'ask' })
+      plan = src.kind === 'native' ? await native!.importPlanPath(src.type, src.path, { hidePdfs, conflict: 'ask' }) : await app.backend.importer.plan(src, { hidePdfs, conflict: 'ask' })
       resolutions = {}
     } catch (e) {
       error = String((e as Error).message ?? e)
@@ -58,6 +60,11 @@
     if (!f) return
     void planFrom({ kind: 'zip', file: f })
     input.value = ''
+  }
+
+  async function pickNative(type: 'folder' | 'zip') {
+    const path = type === 'folder' ? await native!.pickFolder('Choose the vault folder') : await native!.pickZip('Choose a vault .zip')
+    if (path) await planFrom({ kind: 'native', type, path })
   }
 
   async function replan() {
@@ -86,16 +93,38 @@
     busy = true
     error = null
     try {
+      if (native) {
+        const name = `jess-vault-${new Date().toISOString().slice(0, 10)}.zip`
+        const dest = toFolder ? await native.pickFolder('Export into this folder') : await native.pickSaveZip(name)
+        if (dest) {
+          await native.exportTo(dest, portable, !toFolder)
+          app.toast('Export finished')
+        }
+        return
+      }
       const { items, report } = await app.backend.exporter.files(portable)
       const files = items.filter((i) => i.kind !== 'dir')
       let done = 0
       const content = async function* () {
+        // An attachment that isn't on this device and can't be fetched right now is left out and
+        // listed in the report, like the apps do, instead of failing the whole export.
+        const skipped: string[] = []
         for (const it of files) {
-          const bytes = await app.backend.exporter.content(it)
-          progress = { task: 'export', done: ++done, total: files.length }
+          let bytes: Uint8Array
+          try {
+            bytes = await app.backend.exporter.content(it)
+          } catch (e) {
+            if (it.kind !== 'blob') throw e
+            skipped.push(`  ${it.path} (${(e as Error).message ?? e})`)
+            continue
+          } finally {
+            progress = { task: 'export', done: ++done, total: files.length }
+          }
           yield { name: it.path, input: bytes, lastModified: it.modified ? new Date(it.modified) : undefined }
         }
-        if (report) yield { name: 'EXPORT-REPORT.md', input: new TextEncoder().encode(report) }
+        let text = report
+        if (skipped.length) text = `${report ?? 'Jess export report\n\n'}\nNot exported (not available right now):\n${skipped.join('\n')}\n`
+        if (text) yield { name: 'EXPORT-REPORT.txt', input: new TextEncoder().encode(text) }
       }
       const w = window as unknown as { showDirectoryPicker?: (o?: object) => Promise<FileSystemDirectoryHandle>; showSaveFilePicker?: (o?: object) => Promise<FileSystemFileHandle> }
       if (toFolder && w.showDirectoryPicker) {
@@ -135,7 +164,7 @@
     }
   }
 
-  const canFolderExport = typeof window !== 'undefined' && 'showDirectoryPicker' in window
+  const canFolderExport = !!native || (typeof window !== 'undefined' && 'showDirectoryPicker' in window)
 </script>
 
 <Modal title="Import / export" close={() => (app.overlay = null)} wide>
@@ -143,8 +172,13 @@
     <h3>Import an Obsidian vault</h3>
     <p class="small muted">Nothing is changed until you confirm. Existing notes are never overwritten without asking.</p>
     <div class="row">
-      <label class="btn">Choose folder… <input type="file" webkitdirectory multiple hidden onchange={pickFolder} disabled={busy} data-testid="import-folder" /></label>
-      <label class="btn">Choose .zip… <input type="file" accept=".zip,application/zip" hidden onchange={pickZip} disabled={busy} data-testid="import-zip" /></label>
+      {#if native}
+        <button class="btn" disabled={busy} onclick={() => void pickNative('folder')}>Choose folder…</button>
+        <button class="btn" disabled={busy} onclick={() => void pickNative('zip')}>Choose .zip…</button>
+      {:else}
+        <label class="btn">Choose folder… <input type="file" webkitdirectory multiple hidden onchange={pickFolder} disabled={busy} data-testid="import-folder" /></label>
+        <label class="btn">Choose .zip… <input type="file" accept=".zip,application/zip" hidden onchange={pickZip} disabled={busy} data-testid="import-zip" /></label>
+      {/if}
     </div>
     <label class="check"><input type="checkbox" bind:checked={hidePdfs} onchange={() => void replan()} /> Hide PDFs in the attachment folder from the file tree</label>
   </section>

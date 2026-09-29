@@ -1,7 +1,9 @@
 <script lang="ts">
-  // First-run setup, login and pairing-link redemption (DESIGN §14).
+  // First-run setup, login and pairing-link redemption (DESIGN §14). In the apps, the first
+  // step is the server address (or a pairing link, which carries it).
   import { onMount } from 'svelte'
-  import { authState, login, redeem, setToken, setup, type AuthState } from '../lib/auth'
+  import { authState, getServer, login, redeem, setServer, setToken, setup, type AuthState } from '../lib/auth'
+  import { isTauri } from '../lib/platform'
 
   let { done }: { done(token: string): void } = $props()
   let auth = $state<AuthState | null>(null)
@@ -11,13 +13,50 @@
   let error: string | null = $state(null)
   let busy = $state(false)
   let offline = $state(false)
+  let needServer = $state(false)
+  let serverInput = $state('')
 
   async function finish(t: string) {
     await setToken(t)
     done(t)
   }
 
+  async function connect() {
+    offline = false
+    try {
+      auth = await authState()
+    } catch {
+      offline = true
+    }
+  }
+
+  async function submitServer(e: Event) {
+    e.preventDefault()
+    error = null
+    const raw = serverInput.trim()
+    // A pairing link: https://host/#pair=CODE
+    const m = /^(https?:\/\/[^#]+?)\/?#pair=([^&\s]+)/.exec(raw)
+    let url = m ? m[1] : raw
+    if (!/^https?:\/\//.test(url)) url = `https://${url}`
+    busy = true
+    try {
+      await setServer(url.replace(/\/+$/, ''))
+      needServer = false
+      if (m) return await finish((await redeem(decodeURIComponent(m[2]))).token)
+      await connect()
+    } catch (err) {
+      error = `Couldn't use that address: ${(err as Error).message}`
+      needServer = true
+    } finally {
+      busy = false
+    }
+  }
+
   onMount(async () => {
+    if (isTauri && !(await getServer())) {
+      needServer = true
+      return
+    }
     const m = /[#&]pair=([^&]+)/.exec(location.hash)
     if (m) {
       history.replaceState(null, '', location.pathname)
@@ -30,11 +69,7 @@
         busy = false
       }
     }
-    try {
-      auth = await authState()
-    } catch {
-      offline = true
-    }
+    await connect()
   })
 
   async function submit(e: Event) {
@@ -59,26 +94,37 @@
 </script>
 
 <main class="auth">
-  <form onsubmit={submit} data-testid="auth">
-    <h1>Jess Notes</h1>
-    {#if offline}
-      <p>Can't reach the server. Check your connection and reload.</p>
-    {:else if !auth}
-      <p class="muted">{busy ? 'Pairing…' : 'Connecting…'}</p>
-    {:else if auth.needs_setup}
-      <p>Choose the password for this vault. You'll use it to sign in new devices.</p>
-      {#if auth.setup_code_required}
-        <label>Setup code (printed in the server log) <input bind:value={code} autocomplete="one-time-code" required data-testid="setup-code" /></label>
+  {#if needServer}
+    <form onsubmit={submitServer} data-testid="server-form">
+      <h1>Jess Notes</h1>
+      <p>Your Jess server's address, or a pairing link from a device that's already signed in.</p>
+      <label>Server or pairing link <input bind:value={serverInput} placeholder="https://notes.example.com" inputmode="url" autocapitalize="off" required data-testid="server" /></label>
+      <button class="btn primary" disabled={busy} type="submit">Continue</button>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+    </form>
+  {:else}
+    <form onsubmit={submit} data-testid="auth">
+      <h1>Jess Notes</h1>
+      {#if offline}
+        <p>Can't reach the server. Check your connection and reload.</p>
+        {#if isTauri}<button class="btn" type="button" onclick={() => (needServer = true)}>Change server</button>{/if}
+      {:else if !auth}
+        <p class="muted">{busy ? 'Pairing…' : 'Connecting…'}</p>
+      {:else if auth.needs_setup}
+        <p>Choose the password for this vault. You'll use it to sign in new devices.</p>
+        {#if auth.setup_code_required}
+          <label>Setup code (printed in the server log) <input bind:value={code} autocomplete="one-time-code" required data-testid="setup-code" /></label>
+        {/if}
+        <label>Password <input type="password" bind:value={password} autocomplete="new-password" required data-testid="password" /></label>
+        <label>Confirm password <input type="password" bind:value={confirm} autocomplete="new-password" required data-testid="confirm" /></label>
+        <button class="btn primary" disabled={busy} type="submit">Create vault</button>
+      {:else}
+        <label>Password <input type="password" bind:value={password} autocomplete="current-password" required data-testid="password" /></label>
+        <button class="btn primary" disabled={busy} type="submit">Sign in</button>
       {/if}
-      <label>Password <input type="password" bind:value={password} autocomplete="new-password" required data-testid="password" /></label>
-      <label>Confirm password <input type="password" bind:value={confirm} autocomplete="new-password" required data-testid="confirm" /></label>
-      <button class="btn primary" disabled={busy} type="submit">Create vault</button>
-    {:else}
-      <label>Password <input type="password" bind:value={password} autocomplete="current-password" required data-testid="password" /></label>
-      <button class="btn primary" disabled={busy} type="submit">Sign in</button>
-    {/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-  </form>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+    </form>
+  {/if}
 </main>
 
 <style>

@@ -37,7 +37,7 @@ export async function openPdf(src: PdfSource): Promise<PDFDocumentProxy> {
   const task = getDocument({
     range: transport,
     length: src.size,
-    rangeChunkSize: 1 << 18,
+    rangeChunkSize: 1 << 20,
     disableAutoFetch: true,
     disableStream: true,
     // PDF.js 5 never evals font code, and document JavaScript is never run (no scripting sandbox).
@@ -58,6 +58,8 @@ export interface ViewerOptions {
   /** Fixed-height embedded viewer (no outline, compact chrome). */
   compact?: boolean
   onState?(s: ViewerState): void
+  /** Called once, when the first page has been drawn. */
+  onFirstPage?(): void
 }
 
 export interface ViewerState {
@@ -260,6 +262,10 @@ export class PdfViewer {
     }
     s.task = null
     if (!s.live) return
+    if (this.opts.onFirstPage) {
+      this.opts.onFirstPage()
+      this.opts.onFirstPage = undefined
+    }
     textDiv.style.setProperty('--scale-factor', String(this.scale))
     s.text = new TextLayer({ textContentSource: page.streamTextContent(), container: textDiv, viewport: vp })
     try {

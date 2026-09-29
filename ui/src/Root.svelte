@@ -9,6 +9,7 @@
   import { createTabGate } from './lib/tabgate'
   import { registerCommands } from './app-commands'
   import { writeBoot, type BootRecord } from './lib/boot'
+  import { isTauri } from './lib/platform'
 
   let { boot }: { boot: BootRecord | null } = $props()
 
@@ -33,7 +34,8 @@
   }
 
   async function launch(token: string) {
-    const backend = new WebBackend(token)
+    const backend = isTauri ? new (await import('./backend/tauri')).TauriBackend() : new WebBackend(token)
+    if (isTauri) backend.setToken(token)
     if (boot) backend.entries.load(boot.entries)
     const a = new AppState(backend)
     registerCommands(a)
@@ -71,10 +73,13 @@
     addEventListener('online', () => a.backend.online())
     addEventListener('offline', () => a.backend.offline())
     let bootTimer: ReturnType<typeof setTimeout> | undefined
-    a.backend.entries.subscribe(() => {
+    const scheduleBoot = () => {
       clearTimeout(bootTimer)
       bootTimer = setTimeout(saveBoot, 2000)
-    })
+    }
+    a.backend.entries.subscribe(scheduleBoot)
+    // Opening another note too: pagehide isn't reliable (app windows closing, mobile kills).
+    a.onActiveChange = scheduleBoot
     a.backend.on((e) => {
       if (e.ev === 'quota') {
         a.device.offlineAttachments = 'on-demand'
@@ -97,6 +102,8 @@
   }
 
   onMount(async () => {
+    // One window in the apps: no tab gate.
+    if (isTauri) return void (await start())
     // A pairing link always goes to the auth screen first.
     if (/[#&]pair=/.test(location.hash)) {
       if (await gate.tryAcquire()) phase = 'auth'

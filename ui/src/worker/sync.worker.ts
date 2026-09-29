@@ -260,13 +260,32 @@ function schedulePump() {
   queueMicrotask(() => void pumpBlobs().finally(() => (blobPumping = false)))
 }
 
+// The last few 4 MiB chunk records read, so PDF.js's many small range requests don't re-read
+// the same IndexedDB record each time.
+const chunkCache = new Map<string, Uint8Array>()
+async function cachedChunk(hash: string, idx: number): Promise<Uint8Array | null> {
+  const k = `${hash}:${idx}`
+  const hit = chunkCache.get(k)
+  if (hit) {
+    chunkCache.delete(k)
+    chunkCache.set(k, hit)
+    return hit
+  }
+  const c = await getChunk(db, hash, idx)
+  if (c) {
+    chunkCache.set(k, c)
+    while (chunkCache.size > 4) chunkCache.delete(chunkCache.keys().next().value!)
+  }
+  return c
+}
+
 async function readLocal(hash: string, offset: number, len: number): Promise<Uint8Array> {
   const out = new Uint8Array(len)
   let got = 0
   while (got < len) {
     const pos = offset + got
     const idx = Math.floor(pos / CHUNK)
-    const c = await getChunk(db, hash, idx)
+    const c = await cachedChunk(hash, idx)
     if (!c) throw new Error('local blob chunk missing')
     const start = pos - idx * CHUNK
     const n = Math.min(len - got, c.length - start)
@@ -450,15 +469,20 @@ function schedulePolicy(delay = 3000) {
   policyTimer = setTimeout(() => void storagePolicy(), delay)
 }
 
+/** Drops a blob's local bytes if core allows it (the server has confirmed it). */
+async function evictOne(h: string): Promise<boolean> {
+  const w = core.blobEvict(h) as Write[] | undefined
+  if (!w) return false
+  await run(() => ({ writes: w, send: [], events: [] }))
+  await deleteChunks(db, h)
+  for (const k of [...chunkCache.keys()]) if (k.startsWith(`${h}:`)) chunkCache.delete(k)
+  return true
+}
+
 async function evictTo(cap: number) {
-  const victims = core.blobEvictionCandidates(cap) as string[]
-  for (const h of victims) {
-    const w = core.blobEvict(h) as Write[] | undefined
-    if (!w) continue
-    await run(() => ({ writes: w, send: [], events: [] }))
-    await deleteChunks(db, h)
-  }
-  return victims.length
+  let n = 0
+  for (const h of core.blobEvictionCandidates(cap) as string[]) if (await evictOne(h)) n++
+  return n
 }
 
 async function storagePolicy() {
@@ -803,7 +827,7 @@ async function blobRange(hash: string, begin: number, end: number): Promise<Uint
   const first = Math.floor(begin / CHUNK)
   const last = Math.floor((end - 1) / CHUNK)
   let local = true
-  for (let i = first; i <= last && local; i++) local = !!(await getChunk(db, hash, i))
+  for (let i = first; i <= last && local; i++) local = !!(await cachedChunk(hash, i))
   if (local) return readLocal(hash, begin, len)
   const r = await fetch(api(`/api/blobs/${hash}`), { headers: authHeaders({ range: `bytes=${begin}-${end - 1}` }) })
   if (!r.ok) throw new Error(`blob range ${r.status}`)
@@ -983,11 +1007,7 @@ const methods: Record<string, (...a: never[]) => unknown> = {
     return metaGet(db, k)
   },
   async dropBlob(hash: string) {
-    const w = core.blobEvict(hash)
-    if (!w) return false
-    await commit(db, w as Write[])
-    await deleteChunks(db, hash)
-    return true
+    return evictOne(hash)
   },
 }
 

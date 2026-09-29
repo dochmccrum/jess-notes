@@ -10,6 +10,7 @@ pub mod engine;
 pub mod error;
 pub mod http;
 pub mod integrity;
+pub mod serve;
 pub mod snapshot;
 pub mod tasks;
 pub mod writer;

@@ -4,6 +4,7 @@
 // backend and become object URLs, revoked by an LRU.
 import type { Backend } from '../backend/types'
 import type { BlobInfo } from './types'
+import { isTauri, nativeBlobUrl } from './platform'
 
 export type Variant = 'orig' | 'display' | 'thumb' | 'pdf-thumb'
 
@@ -24,6 +25,7 @@ export function swUrl(hash: string, variant: Variant, info?: BlobInfo | null): s
 
 /** A URL for the blob, or null if its bytes can't be had right now (offline and not local). */
 export async function blobUrl(backend: Backend, hash: string, variant: Variant, info?: BlobInfo | null): Promise<string | null> {
+  if (isTauri) return nativeBlobUrl(hash, variant)
   if (swActive()) return swUrl(hash, variant, info)
   const key = `${hash}/${variant}`
   const hit = objectUrls.get(key)

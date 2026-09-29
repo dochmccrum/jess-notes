@@ -973,3 +973,48 @@ each tightens a rule the simulation showed was underspecified.
 28. **Service worker precache list** is injected into `sw.js` after the build
     (`scripts/sw-manifest.mjs`); navigations are network-first with a 2.5 s timeout and fall back
     to the cached shell, hashed assets are cache-first, `/api/*` is never intercepted.
+29. **Derivation runs as a subprocess of the same binary** (`jess derive image|pdf <in> <outdir>`),
+    one job at a time, with `RLIMIT_AS` 2 GiB, `RLIMIT_CPU` 120 s, `RLIMIT_FSIZE` 256 MiB, no core
+    dumps, `nice 10` and a 120 s wall-clock timeout. Results go to
+    `/data/derived/<kind>/<hex>[.png]` and a `derived` row (`ok` / `error` / `unavailable` when
+    pdfium is missing; `unavailable` rows are retried once pdfium appears). Bumping a kind's version
+    re-derives everything. *Gap:* the subprocess is not network-isolated (that needs namespaces and
+    privileges the container doesn't have); it never opens sockets itself.
+30. **pdfium comes from the `pypdfium2` 5.13.0 wheel on PyPI** (the pdfium-binaries
+    `chromium/7999` build, the same upstream as bblanchon's releases), pinned by SHA-256 per
+    architecture in the Dockerfile. PyPI files are immutable and their hashes are published, which
+    made pinning possible from this environment. `JESS_PDFIUM_LIB` overrides the library path.
+31. **Clients keep blob facts** (size, mime, oriented dimensions) from the server's blob rows, in
+    the KV store under a new `f` prefix; the server's row is authoritative and local ingest fills
+    gaps (so a paste renders at its size immediately). Entries sent to the UI carry `blobInfo`.
+    When bytes reach the server before any entry describes them (server-side import, or an upload
+    that finishes first), the first entry that does fills the missing facts on the row, with a new
+    seq so clients learn them. Known facts are never overwritten.
+32. **`pdf-text` is stored zstd-compressed but served as JSON** (`{"pages": [...]}`), gzip-encoded
+    when accepted: browsers can't decode zstd everywhere.
+33. **PDF.js uses its legacy build**: the modern 5.x build relies on very new JS
+    (`Map.prototype.getOrInsertComputed`) missing from current WebViews and WebKitGTK. Range
+    requests are 1 MiB; the worker keeps the last 4 chunk records in memory so PDF.js's small reads
+    don't re-read IndexedDB. Measured (dev machine, Chromium, bytes local): a 5 MB PDF whose first
+    page holds a 5 MB image shows page 1 in 250–270 ms; a note with 50 images opens in 16–21 ms.
+34. **Web blob storage is IndexedDB chunk records only** in this phase (the OPFS SyncAccessHandle
+    path from §7.5 is deferred to the phase 8 performance pass); the service worker reads the same
+    records. Until the server's display variant exists, `/_blob/…/display` falls back to the
+    original bytes (which are local on the pasting device) instead of generating a thumbnail locally.
+35. **Offline attachments policy** lives in the worker: `everything` queues every missing blob at
+    P3; `on-demand` evicts to a 1 GB LRU cap (never unconfirmed blobs — core enforces it). A
+    `QuotaExceededError` while storing downloads switches the device to on-demand, evicts, and
+    shows a banner.
+36. **Live preview details:** an embed becomes a block widget only when it is the whole of its
+    paragraph (otherwise inline); rendered widgets other than maths keep their own events (viewer,
+    buttons, scrolling) instead of turning back into source on click; a `refreshLinks` effect
+    re-resolves links and embeds when entries change (a pasted file's entry appears, facts arrive).
+37. **Attachment names:** clipboard files named `image.*` (screenshots) get Obsidian's
+    `Pasted image YYYYMMDDHHmmss.ext`; dropped or picked files keep their names; collisions in the
+    target folder get ` 1`, ` 2`… HEIC/HEIF on Apple devices is converted to JPEG (0.92) first.
+38. **PDF memory cap:** at most 12 rendered pages per viewer (6 on touch devices), device-pixel
+    ratio capped at 2 on touch devices; pages far from the current one are released first. At most
+    2 live embedded viewers exist; embeds show the server's page-1 thumbnail until live.
+39. **The search index has a schema version** (now 2: a `page` column and a `pdfs` table); a
+    mismatch drops and rebuilds it. Backlinks, tags and search results refresh on an `indexed`
+    event, and answer only after pending edits are indexed.

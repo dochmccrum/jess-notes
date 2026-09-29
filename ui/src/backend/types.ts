@@ -52,8 +52,19 @@ export type BackendEvent =
   | { ev: 'indexed' }
   | { ev: 'quota'; evicted: number }
 
+/** Native file access (Tauri): real folder/zip paths instead of browser file lists. */
+export interface NativeIO {
+  pickFolder(title: string): Promise<string | null>
+  pickZip(title: string): Promise<string | null>
+  pickSaveZip(defaultName: string): Promise<string | null>
+  importPlanPath(kind: 'folder' | 'zip', path: string, opts: { hidePdfs?: boolean; conflict?: string }): Promise<ImportPlanView>
+  exportTo(path: string, portable: boolean, zip: boolean): Promise<void>
+}
+
 export interface Backend {
   readonly entries: EntryStore
+  /** Present on native platforms. */
+  readonly native?: NativeIO
   readonly sync: Readable<SyncStatus>
   start(): Promise<void>
   intent(ops: MetaIntent[]): Promise<{ ok: boolean; error?: string }>

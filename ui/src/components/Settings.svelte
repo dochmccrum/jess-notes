@@ -1,7 +1,7 @@
 <script lang="ts">
   import Modal from './Modal.svelte'
   import type { AppState } from '../stores/app.svelte'
-  import { createPairing, getToken, listDevices, revokeDevice, setToken } from '../lib/auth'
+  import { createPairing, getServer, getToken, listDevices, revokeDevice, setToken } from '../lib/auth'
   import { bindingsFor, get as getCommand } from '../lib/commands'
   import { applyTheme } from '../lib/theme'
   import { requestErase } from '../lib/erase'
@@ -31,7 +31,7 @@
   async function makePair() {
     if (!token) return
     const r = await createPairing(token)
-    pair = { link: `${location.origin}/#pair=${r.code}`, expires: r.expires_at }
+    pair = { link: `${(await getServer()) ?? location.origin}/#pair=${r.code}`, expires: r.expires_at }
   }
 
   async function revoke(id: string) {

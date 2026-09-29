@@ -181,6 +181,10 @@ pub struct BlobManager {
     in_flight_chunks: BTreeMap<Hash, BTreeSet<u32>>,
     in_flight_complete: BTreeSet<Hash>,
     in_flight_ranges: BTreeMap<Hash, BTreeSet<u32>>,
+    /// Downloads the server couldn't serve (not uploaded yet by its device, or gone): not retried
+    /// until the server reports the blob present or the connection is re-established. Without
+    /// this, a blob whose uploader is offline would be re-requested in a tight loop.
+    parked: BTreeSet<Hash>,
     presence_in_flight: bool,
     uploads_done_session: usize,
 }
@@ -241,6 +245,7 @@ impl BlobManager {
 
     /// The server reports the blob as present (Changes blob row, upload complete, presence).
     pub fn server_present(&mut self, hash: Hash) -> Vec<Write> {
+        self.parked.remove(&hash);
         match self.local.get_mut(&hash) {
             Some(b) if b.state != LocalState::Confirmed && b.state != LocalState::Remote => {
                 b.state = LocalState::Confirmed;
@@ -275,6 +280,14 @@ impl BlobManager {
 
     /// Ask for a blob's bytes at a priority (re-ranks if already queued).
     pub fn want(&mut self, hash: Hash, size: u64, prio: u8, now: u64) -> Vec<Write> {
+        let size = match self.local.get(&hash) {
+            Some(b) if size == 0 => b.size,
+            _ => size,
+        };
+        if size == 0 {
+            // Size unknown (its row hasn't arrived yet), or an empty file: nothing to fetch.
+            return vec![];
+        }
         if let Some(b) = self.local.get_mut(&hash) {
             b.last_access = now;
             if b.complete_locally(self.chunk) {
@@ -330,7 +343,11 @@ impl BlobManager {
         BlobProgress {
             uploads_pending: pending,
             uploads_total: pending + self.uploads_done_session,
-            downloads_pending: self.downloads.len(),
+            downloads_pending: self
+                .downloads
+                .keys()
+                .filter(|h| !self.parked.contains(*h))
+                .count(),
         }
     }
 
@@ -352,6 +369,30 @@ impl BlobManager {
         Some(BlobTask::Presence { hashes })
     }
 
+    /// The server told us a blob's size: fix a record created while it was unknown (0).
+    pub fn learn_size(&mut self, hash: Hash, size: u64) -> Vec<Write> {
+        let Some(b) = self.local.get_mut(&hash) else {
+            return vec![];
+        };
+        if b.size != 0 || b.state != LocalState::Remote {
+            return vec![];
+        }
+        b.size = size;
+        b.have = Bitmap::default();
+        let b = b.clone();
+        if let Some(d) = self.downloads.get_mut(&hash) {
+            d.1 = size;
+        }
+        let mut w = vec![self.put(&b)];
+        if let Some(d) = self.downloads.get(&hash) {
+            w.push(Write::Put(
+                kv::download_key(hash),
+                minicbor::to_vec(*d).expect("encode"),
+            ));
+        }
+        w
+    }
+
     /// Transport reset (disconnect / restart): forget in-flight work; everything is retried.
     pub fn reset_in_flight(&mut self) {
         self.in_flight_begin.clear();
@@ -359,6 +400,7 @@ impl BlobManager {
         self.in_flight_complete.clear();
         self.in_flight_ranges.clear();
         self.presence_in_flight = false;
+        self.parked.clear();
     }
 
     /// Next transfer tasks within the concurrency limits.
@@ -438,6 +480,9 @@ impl BlobManager {
         for (_, h, size) in q {
             if in_flight >= MAX_DOWNLOAD_RANGES {
                 break;
+            }
+            if self.parked.contains(&h) {
+                continue;
             }
             let n = chunk_count(size, self.chunk);
             let have = self
@@ -531,6 +576,9 @@ impl BlobManager {
             BlobResult::RangeDone { hash, index, ok } => {
                 if let Some(s) = self.in_flight_ranges.get_mut(&hash) {
                     s.remove(&index);
+                }
+                if !ok {
+                    self.parked.insert(hash);
                 }
                 if ok {
                     if let Some(b) = self.local.get_mut(&hash) {
@@ -705,11 +753,56 @@ mod tests {
     }
 
     #[test]
+    fn unknown_size_is_not_fetched_until_learned() {
+        let mut m = BlobManager::new(10);
+        assert!(m.want(h(1), 0, P0_OPEN, 0).is_empty());
+        assert!(m.next_tasks().is_empty());
+        m.want(h(2), 25, P0_OPEN, 0);
+        assert_eq!(m.learn_size(h(2), 99), vec![], "known sizes are kept");
+        assert_eq!(m.want(h(2), 0, P0_OPEN, 0), vec![], "already queued");
+        let t = m.next_tasks();
+        assert!(t
+            .iter()
+            .all(|t| matches!(t, BlobTask::GetRange { len, .. } if *len > 0)));
+    }
+
+    #[test]
     fn download_priorities() {
         let mut m = BlobManager::new(10);
         m.want(h(1), 5, P3_PREFETCH, 0);
         m.want(h(2), 5, P0_OPEN, 0);
         let t = m.next_tasks();
         assert!(matches!(t[0], BlobTask::GetRange { hash, .. } if hash == h(2)));
+    }
+
+    #[test]
+    fn unservable_download_is_parked_until_present_or_reconnect() {
+        let mut m = BlobManager::new(10);
+        m.want(h(1), 5, P0_OPEN, 0);
+        let t = m.next_tasks();
+        assert!(matches!(t[0], BlobTask::GetRange { hash, index: 0, .. } if hash == h(1)));
+        m.on_result(
+            BlobResult::RangeDone {
+                hash: h(1),
+                index: 0,
+                ok: false,
+            },
+            0,
+        );
+        assert!(m.next_tasks().is_empty(), "no hot retry loop");
+        assert_eq!(m.progress().downloads_pending, 0);
+        m.server_present(h(1));
+        assert_eq!(m.next_tasks().len(), 1);
+        m.on_result(
+            BlobResult::RangeDone {
+                hash: h(1),
+                index: 0,
+                ok: false,
+            },
+            0,
+        );
+        assert!(m.next_tasks().is_empty());
+        m.reset_in_flight();
+        assert_eq!(m.next_tasks().len(), 1);
     }
 }

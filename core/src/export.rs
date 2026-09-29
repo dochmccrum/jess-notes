@@ -26,6 +26,7 @@ pub fn write_zip<W: Write>(
     mut progress: impl FnMut(usize, usize),
 ) -> io::Result<W> {
     let mut z = ZipStream::new(w);
+    let mut skipped = Vec::new();
     let total = p.items.len();
     for (i, it) in p.items.iter().enumerate() {
         match &it.source {
@@ -34,21 +35,23 @@ pub fn write_zip<W: Write>(
                 let b = src.text(*id)?;
                 z.add_bytes(&it.path, &b, it.modified_at, true)?;
             }
-            Source::Blob(h) => {
-                let (mut r, size) = src.blob(*h)?;
-                z.add_file(
+            Source::Blob(h) => match src.blob(*h) {
+                Ok((mut r, size)) => z.add_file(
                     &it.path,
                     size,
                     it.modified_at,
                     is_text_path(&it.path),
                     &mut r,
-                )?;
-            }
+                )?,
+                // Not on this device and not fetchable (offline, or its uploader hasn't finished):
+                // leave it out and say so rather than failing the whole export.
+                Err(e) => skipped.push(format!("{} ({e})", it.path)),
+            },
         }
         progress(i + 1, total);
     }
-    if !p.mapped.is_empty() || !p.errors.is_empty() {
-        z.add_bytes("EXPORT-REPORT.txt", p.report().as_bytes(), None, true)?;
+    if let Some(report) = report_with(p, skipped) {
+        z.add_bytes("EXPORT-REPORT.txt", report.as_bytes(), None, true)?;
     }
     z.finish()
 }
@@ -61,6 +64,7 @@ pub fn write_folder(
     dest: &std::path::Path,
 ) -> io::Result<()> {
     std::fs::create_dir_all(dest)?;
+    let mut skipped = Vec::new();
     for it in &p.items {
         let target = dest.join(&it.path);
         match &it.source {
@@ -69,16 +73,30 @@ pub fn write_folder(
                 let b = src.text(*id)?;
                 atomic_write(&target, &mut &b[..])?;
             }
-            Source::Blob(h) => {
-                let (mut r, _) = src.blob(*h)?;
-                atomic_write(&target, &mut r)?;
-            }
+            Source::Blob(h) => match src.blob(*h) {
+                Ok((mut r, _)) => atomic_write(&target, &mut r)?,
+                Err(e) => skipped.push(format!("{} ({e})", it.path)),
+            },
         }
     }
-    if !p.mapped.is_empty() || !p.errors.is_empty() {
-        atomic_write(&dest.join("EXPORT-REPORT.txt"), &mut p.report().as_bytes())?;
+    if let Some(report) = report_with(p, skipped) {
+        atomic_write(&dest.join("EXPORT-REPORT.txt"), &mut report.as_bytes())?;
     }
     Ok(())
+}
+
+/// The report, if there is anything to report: profile mappings, projection errors, and blobs
+/// that couldn't be read during this export.
+fn report_with(p: &Projection, skipped: Vec<String>) -> Option<String> {
+    if p.mapped.is_empty() && p.errors.is_empty() && skipped.is_empty() {
+        return None;
+    }
+    if skipped.is_empty() {
+        return Some(p.report());
+    }
+    let mut q = p.clone();
+    q.errors.extend(skipped);
+    Some(q.report())
 }
 
 pub fn atomic_write(target: &std::path::Path, r: &mut dyn Read) -> io::Result<()> {

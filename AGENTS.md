@@ -11,11 +11,10 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 3. `docs/PHASES.md` — phase checklist, current status, and phase log. **Keep it updated.**
 
 ## Current state (2026-09-29)
-- Phases 0–1 done (see the Phase log in `docs/PHASES.md`). Phase 1 refinements to the design are in DESIGN §22.
-- Next step: Phase 2 (projection, import/export, mirror + git).
-- Test commands: `cargo test --workspace`; long simulation `SIM_SEEDS=10000 cargo test --release -p jess-server --test sim -- --nocapture`
-  (reproduce one seed with `SIM_SEED=n`, which prints a full trace); crash tests `CRASH_ITERS=20 cargo test -p jess-server --test crash`;
-  Yjs compat `cd core/tests/yjs-compat && npm install && node gen.mjs && node verify.mjs`.
+- Phases 0–4 done (see the Phase log in `docs/PHASES.md`); implementation decisions beyond the approved design are in `docs/DESIGN.md` §22.
+- Next step: Phase 5 (Tauri Linux).
+- Work so far is on branch `claude/fervent-johnson-qjsqyv` (not yet merged to `main`).
+- Build: `cd ui && corepack enable && pnpm install && pnpm wasm && pnpm build`; server `cargo build -p jess-server`; tests `cargo test --workspace`, `cd ui && pnpm test && pnpm e2e` (e2e needs the built UI and `target/debug/jess`; set `JESS_PDFIUM_LIB` for PDF text tests).
 
 ## Working rules (from the owner)
 - Build phase by phase. End each phase with all tests passing, a commit, a push to `origin/main`, and a short summary appended to the Phase log in `docs/PHASES.md`.

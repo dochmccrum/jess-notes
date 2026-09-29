@@ -10,3 +10,4 @@ ui/test-results/
 ui/playwright-report/
 !tests/fixtures/vault/.DS_Store
 !tests/fixtures/vault/**/.DS_Store
+apps/tauri/src-tauri/gen/

@@ -710,6 +710,9 @@ impl Client {
         }
         self.entries_for_facts(&fact_changed, &mut changed);
         for b in c.blobs {
+            if b.size != 0 {
+                out.writes.extend(self.blobs.learn_size(b.hash, b.size));
+            }
             if b.present {
                 out.writes.extend(self.blobs.server_present(b.hash));
             } else {
@@ -879,7 +882,8 @@ impl Client {
         let merged = match self.facts.get(&h) {
             None => f,
             Some(cur) if authoritative => BlobInfo {
-                size: f.size,
+                // A row for bytes not uploaded yet may carry size 0 (unknown): keep ours.
+                size: if f.size != 0 { f.size } else { cur.size },
                 mime: f.mime.or_else(|| cur.mime.clone()),
                 width: f.width.or(cur.width),
                 height: f.height.or(cur.height),

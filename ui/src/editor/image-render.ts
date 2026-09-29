@@ -39,7 +39,12 @@ export const impl: RendererImpl = {
     img.style.height = 'auto'
     let dead = false
     img.onerror = () => {
-      if (!dead) placeholder(el, 'offline', `${ctx.source} isn't available offline`, box)
+      if (dead) return
+      // Imported HEIC/HEIF files are kept byte-for-byte; most engines other than Apple's can't
+      // decode them (and the server only derives a display variant when built with libheif).
+      const heic = /image\/hei[cf]/.test(ctx.info?.mime ?? '') || /\.(heic|heif)$/i.test(ctx.source)
+      if (heic) placeholder(el, 'unsupported', `${ctx.source} is a HEIC image this device can't display`, box)
+      else placeholder(el, 'offline', `${ctx.source} isn't available offline`, box)
     }
     img.addEventListener('click', (e) => {
       e.preventDefault()

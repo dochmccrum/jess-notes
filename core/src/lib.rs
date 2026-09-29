@@ -16,6 +16,7 @@ pub mod client;
 pub mod doc;
 pub mod export;
 pub mod import;
+pub mod json;
 pub mod kv;
 pub mod links;
 pub mod projection;

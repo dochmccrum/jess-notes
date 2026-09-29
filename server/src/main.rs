@@ -6,12 +6,9 @@ use jess_server::blobfs::BlobFs;
 use jess_server::config::{now_ms, Config};
 use jess_server::db;
 use jess_server::engine::Engine;
-use jess_server::http::{self, App};
-use jess_server::writer::Writer;
 use std::io::BufRead;
 use std::net::SocketAddr;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex, RwLock};
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -75,9 +72,7 @@ fn health(cfg: &Config) -> Result<(), String> {
 }
 
 fn open_engine(cfg: &Config) -> Result<Engine, String> {
-    std::fs::create_dir_all(&cfg.data_dir).map_err(|e| e.to_string())?;
-    let conn = db::open(&cfg.db_path(), true).map_err(|e| e.to_string())?;
-    Engine::open(conn, cfg.engine_config(), rand::random()).map_err(|e| e.to_string())
+    jess_server::serve::open_engine(cfg)
 }
 
 fn integrity(cfg: Config, hashes: bool, mirror: bool) -> Result<(), String> {
@@ -151,62 +146,12 @@ fn rebuild_mirror(cfg: Config) -> Result<(), String> {
 }
 
 fn serve(cfg: Config) -> Result<(), String> {
-    std::fs::create_dir_all(&cfg.data_dir)
-        .map_err(|e| format!("cannot create {}: {e}", cfg.data_dir.display()))?;
-    let fs = BlobFs::new(cfg.blobs_dir(), true).map_err(|e| e.to_string())?;
-    let cfg2 = cfg.clone();
-    let writer = Writer::spawn(move || {
-        open_engine(&cfg2).unwrap_or_else(|e| panic!("cannot open database: {e}"))
-    });
-    let (vault_id, account, tokens) = writer.call_blocking(|e| {
-        (
-            e.vault_id,
-            auth::account_hash(&e.conn).ok().flatten(),
-            auth::load_tokens(&e.conn).unwrap_or_default(),
-        )
-    });
-    let mut setup_code = None;
-    if account.is_none() {
-        match &cfg.admin_password {
-            Some(pw) => {
-                let phc = auth::hash_password(pw);
-                writer
-                    .call_blocking(move |e| auth::set_password(&e.conn, &phc, true, now_ms()))
-                    .map_err(|e| e.to_string())?;
-                tracing::info!("account created from JESS_ADMIN_PASSWORD");
-            }
-            None => {
-                let code = auth::setup_code();
-                tracing::warn!(
-                    "SETUP CODE: {code}  (enter it on the setup screen to create the account)"
-                );
-                setup_code = Some(code);
-            }
-        }
-    }
-    let app = Arc::new(App {
-        cfg: cfg.clone(),
-        writer,
-        fs,
-        vault_id,
-        tokens: RwLock::new(tokens),
-        revoked: tokio::sync::broadcast::channel(16).0,
-        limiter: Mutex::new(jess_server::auth::RateLimiter::new(
-            cfg.login_per_minute as usize,
-        )),
-        setup_code: Mutex::new(setup_code),
-        started: now_ms(),
-        status: Mutex::new(Default::default()),
-        mirror: Default::default(),
-    });
+    let app = jess_server::serve::build(&cfg)?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
     rt.block_on(async move {
-        jess_server::tasks::spawn(app.clone());
-        jess_server::derive::spawn(app.clone());
-        jess_server::start_mirror(app.clone());
         let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
         let listener = tokio::net::TcpListener::bind(addr)
             .await
@@ -215,28 +160,7 @@ fn serve(cfg: Config) -> Result<(), String> {
             "jess listening on {addr} (data: {})",
             cfg.data_dir.display()
         );
-        let router = http::router(app.clone());
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| e.to_string())?;
-        tracing::info!("shutting down: flushing mirror and checkpointing WAL");
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            jess_server::flush_mirror(app.clone()),
-        )
-        .await;
-        app.writer
-            .call(|e| {
-                e.conn
-                    .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-                    .map_err(|e| e.to_string())
-            })
-            .await?;
-        Ok::<(), String>(())
+        jess_server::serve::run(app, listener, shutdown_signal(), true).await
     })
 }
 
