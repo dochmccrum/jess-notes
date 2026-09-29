@@ -114,6 +114,9 @@ export class WebBackend implements Backend {
   blobWant(hash: string, size: number, prio: number) {
     this.worker.postMessage({ id: 0, method: 'blobWant', args: [hash, size, prio] })
   }
+  blobRange(hash: string, begin: number, end: number) {
+    return this.call<Uint8Array>('blobRange', hash, begin, end)
+  }
   blobRead(hash: string, variant: string) {
     return this.call<{ bytes: Uint8Array; mime: string | null } | null>('blobRead', hash, variant)
   }

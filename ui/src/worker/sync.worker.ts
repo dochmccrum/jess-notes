@@ -671,6 +671,19 @@ async function exportContent(item: { id: string; kind: string; hash?: string }):
   return new Uint8Array()
 }
 
+async function blobRange(hash: string, begin: number, end: number): Promise<Uint8Array> {
+  const len = end - begin
+  // Local chunks when all the needed ones are here (complete or partially downloaded blobs).
+  const first = Math.floor(begin / CHUNK)
+  const last = Math.floor((end - 1) / CHUNK)
+  let local = true
+  for (let i = first; i <= last && local; i++) local = !!(await getChunk(db, hash, i))
+  if (local) return readLocal(hash, begin, len)
+  const r = await fetch(api(`/api/blobs/${hash}`), { headers: authHeaders({ range: `bytes=${begin}-${end - 1}` }) })
+  if (!r.ok) throw new Error(`blob range ${r.status}`)
+  return new Uint8Array(await r.arrayBuffer())
+}
+
 async function blobRead(hash: string, variant: string): Promise<{ bytes: Uint8Array; mime: string | null } | null> {
   if (variant !== 'orig') {
     try {
@@ -802,6 +815,10 @@ const methods: Record<string, (...a: never[]) => unknown> = {
   blobWant(hash: string, size: number, prio: number) {
     void run(() => ({ writes: core.blobWant(hash, size, prio, Date.now()) as Write[], send: [], events: [] }))
     schedulePump()
+  },
+  /** Bytes [begin, end) of a blob for PDF.js's range transport. */
+  async blobRange(hash: string, begin: number, end: number): Promise<Uint8Array> {
+    return blobRange(hash, begin, end)
   },
   blobIsLocal(hash: string) {
     return core.blobIsLocal(hash)

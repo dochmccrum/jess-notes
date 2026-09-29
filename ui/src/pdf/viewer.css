@@ -1,0 +1,23 @@
+.jess-pdf-scroll {
+  position: relative;
+}
+.jess-pdf-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  min-width: min-content;
+}
+.jess-pdf-page {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+.jess-pdf-page canvas {
+  display: block;
+}
+.jess-pdf-page .textLayer .jess-found {
+  background: rgba(255, 200, 0, 0.45);
+}

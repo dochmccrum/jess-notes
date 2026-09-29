@@ -27,6 +27,7 @@
     "client-zip": "^2.5.1",
     "katex": "^0.16.22",
     "lib0": "^0.2.108",
+    "pdfjs-dist": "^5.7.284",
     "svelte": "^5.38.0",
     "y-codemirror.next": "^0.3.5",
     "yjs": "^13.6.27"

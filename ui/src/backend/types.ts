@@ -67,6 +67,7 @@ export interface Backend {
   /** Queue a blob download at a priority (0 open doc, 1 embed, 2 recent, 3 prefetch). */
   blobWant(hash: string, size: number, prio: number): void
   /** Bytes of a blob (`orig`) or derived variant, local first; null if unavailable. */
+  blobRange(hash: string, begin: number, end: number): Promise<Uint8Array>
   blobRead(hash: string, variant: string): Promise<{ bytes: Uint8Array; mime: string | null } | null>
   importer: {
     plan(src: ImportSource, opts: { hidePdfs?: boolean; conflict?: string }): Promise<ImportPlanView>

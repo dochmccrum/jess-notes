@@ -10,6 +10,15 @@
   import { embedFor } from '../editor/embeds'
   import { refreshLinks } from '../editor/livepreview'
   import { addAttachments } from '../editor/attachments'
+  import PdfPane from './PdfPane.svelte'
+  import { blobUrl } from '../lib/blobs'
+
+  // Images opened directly (from the tree with "show all attachments", or a link).
+  let imageSrc: string | undefined = $state()
+  $effect(() => {
+    const e = app.entries.get(id)
+    if (e?.kind === 'media' && e.blob) void blobUrl(app.backend, e.blob, 'display', e.blobInfo).then((u) => (imageSrc = u ?? undefined))
+  })
 
   let { app, id }: { app: AppState; id: string } = $props()
   let host: HTMLDivElement | undefined = $state()
@@ -117,8 +126,14 @@
     <div class="editor" bind:this={host} data-testid="editor"></div>
   {:else if entry && entry.kind === 'markdown'}
     <div class="empty muted">This note isn't valid UTF-8, so it's read-only here. It's kept and exported byte-for-byte.</div>
-  {:else if entry && entry.kind === 'pdf'}
-    <div class="empty muted">PDF viewer arrives in the next update.</div>
+  {:else if entry && entry.kind === 'pdf' && entry.blob}
+    {#key entry.blob}
+      <PdfPane {app} {id} hash={entry.blob} size={entry.blobInfo?.size ?? 0} />
+    {/key}
+  {:else if entry && entry.kind === 'media' && entry.blob && (entry.blobInfo?.mime ?? '').startsWith('image/')}
+    <div class="image-page">
+      <img src={imageSrc} alt={entry.name} width={entry.blobInfo?.width ?? undefined} height={entry.blobInfo?.height ?? undefined} />
+    </div>
   {:else if entry}
     <div class="empty muted">{entry.name}</div>
   {/if}
@@ -171,6 +186,17 @@
     gap: 12px;
     align-items: center;
     font-size: 14px;
+  }
+  .image-page {
+    flex: 1;
+    overflow: auto;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+  }
+  .image-page img {
+    max-width: 100%;
+    height: auto;
   }
   .banner.error {
     color: var(--danger);

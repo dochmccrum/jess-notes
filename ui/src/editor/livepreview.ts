@@ -82,7 +82,9 @@ class RenderWidget extends WidgetType {
     this.teardown?.()
   }
   ignoreEvent() {
-    return false
+    // Clicking rendered maths puts the cursor in it (to edit, as in Obsidian); images and PDFs
+    // keep their own clicks (viewer, buttons, scrolling) instead of turning back into source.
+    return this.renderer !== 'math'
   }
   get estimatedHeight() {
     if (!this.block) return -1

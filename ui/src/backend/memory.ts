@@ -95,6 +95,9 @@ export class MemoryBackend implements Backend {
   setForeground() {}
   readonly blobs = new Map<string, Uint8Array>()
   blobWant() {}
+  async blobRange(hash: string, begin: number, end: number) {
+    return (this.blobs.get(hash) ?? new Uint8Array()).slice(begin, end)
+  }
   async blobRead(hash: string) {
     const b = this.blobs.get(hash)
     return b ? { bytes: b, mime: null } : null
