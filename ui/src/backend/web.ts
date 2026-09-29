@@ -106,13 +106,16 @@ export class WebBackend implements Backend {
     return this.call<string[]>('notesWithTag', t)
   }
   search(q: string) {
-    return this.call<{ id: string; snippet: string }[]>('search', q)
+    return this.call<{ id: string; snippet: string; page?: number }[]>('search', q)
   }
   ingest(file: Blob, name?: string) {
     return this.call<{ hash: string; size: number; header: Uint8Array; info: BlobInfo }>('ingest', file, name)
   }
   blobWant(hash: string, size: number, prio: number) {
     this.worker.postMessage({ id: 0, method: 'blobWant', args: [hash, size, prio] })
+  }
+  attachmentRefs() {
+    return this.call<Record<string, number>>('attachmentRefs')
   }
   blobRange(hash: string, begin: number, end: number) {
     return this.call<Uint8Array>('blobRange', hash, begin, end)
@@ -132,6 +135,9 @@ export class WebBackend implements Backend {
   on(cb: (e: BackendEvent) => void) {
     this.listeners.add(cb)
     return () => this.listeners.delete(cb)
+  }
+  setOfflineMode(mode: 'everything' | 'on-demand') {
+    void this.call('setOfflineMode', mode)
   }
   setForeground(f: boolean) {
     void this.call('setForeground', f)

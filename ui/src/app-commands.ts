@@ -40,6 +40,7 @@ export function registerCommands(app: AppState) {
   register({ id: 'palette', title: 'Command palette', hidden: true, run: () => toggleOverlay('palette') })
   register({ id: 'settings', title: 'Open settings', run: () => toggleOverlay('settings') })
   register({ id: 'trash.open', title: 'Open trash', run: () => toggleOverlay('trash') })
+  register({ id: 'attachments.open', title: 'Manage attachments', run: () => toggleOverlay('attachments') })
   register({ id: 'import.open', title: 'Import / export vault…', run: () => toggleOverlay('import') })
   register({
     id: 'panel.backlinks',

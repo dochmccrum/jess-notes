@@ -7,7 +7,7 @@ import { newId } from '../lib/ids'
 import { freeName, nfc, validateName, isMarkdownName } from '../lib/names'
 import type { EntryMeta, MetaIntent } from '../lib/types'
 
-export type Overlay = null | 'switcher' | 'palette' | 'settings' | 'import' | 'trash' | 'move'
+export type Overlay = null | 'switcher' | 'palette' | 'settings' | 'import' | 'trash' | 'move' | 'attachments'
 
 export interface PromptReq {
   title: string
@@ -34,6 +34,8 @@ export class AppState {
   toasts: Toast[] = $state([])
   /** Bumps whenever entries change (components derive from it). */
   version = $state(0)
+  /** Bumps when the link/tag/search index has caught up with edits. */
+  indexVersion = $state(0)
   sidebarTab: 'files' | 'tags' | 'search' = $state('files')
   treeFocus: string | null = $state(null)
   pendingSubpath: string | null = $state(null)
@@ -45,6 +47,9 @@ export class AppState {
   constructor(readonly backend: Backend) {
     backend.entries.subscribe(() => {
       this.version++
+    })
+    backend.on((e) => {
+      if (e.ev === 'indexed') this.indexVersion++
     })
     backend.entries.showAllAttachments = this.device.showAllAttachments
   }

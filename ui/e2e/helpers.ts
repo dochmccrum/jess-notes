@@ -11,7 +11,11 @@ export async function login(page: Page) {
 }
 
 export async function newNote(page: Page, name: string) {
+  const before = await page.evaluate(() => location.hash)
   await page.getByTestId('new-note').click()
+  // Wait for the *new* note to be open (not the previous one's editor).
+  await expect.poll(() => page.evaluate(() => location.hash)).not.toBe(before)
+  await expect(page.getByRole('navigation', { name: 'Path' })).toHaveText(/Untitled/)
   const editor = page.locator('.cm-content')
   await expect(editor).toBeVisible()
   await page.keyboard.press('F2')

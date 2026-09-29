@@ -72,7 +72,16 @@ export class MemoryBackend implements Backend {
     return []
   }
   async ingest(file: Blob, name = '') {
-    const bytes = new Uint8Array(await file.arrayBuffer())
+    // (FileReader: test DOMs without Blob.arrayBuffer)
+    const buf: ArrayBuffer =
+      typeof file.arrayBuffer === 'function'
+        ? await file.arrayBuffer()
+        : await new Promise((r) => {
+            const fr = new FileReader()
+            fr.onload = () => r(fr.result as ArrayBuffer)
+            fr.readAsArrayBuffer(file)
+          })
+    const bytes = new Uint8Array(buf)
     const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
     const hash = Array.from(d, (x) => x.toString(16).padStart(2, '0')).join('')
     this.blobs.set(hash, bytes)
@@ -95,6 +104,10 @@ export class MemoryBackend implements Backend {
   setForeground() {}
   readonly blobs = new Map<string, Uint8Array>()
   blobWant() {}
+  refs: Record<string, number> = {}
+  async attachmentRefs() {
+    return this.refs
+  }
   async blobRange(hash: string, begin: number, end: number) {
     return (this.blobs.get(hash) ?? new Uint8Array()).slice(begin, end)
   }
@@ -103,6 +116,7 @@ export class MemoryBackend implements Backend {
     return b ? { bytes: b, mime: null } : null
   }
   online() {}
+  setOfflineMode() {}
   offline() {}
   async flush() {}
   setToken() {}

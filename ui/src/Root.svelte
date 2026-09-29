@@ -43,6 +43,7 @@
     if (last && backend.entries.get(last)) a.open(last)
     try {
       await backend.start()
+      backend.setOfflineMode(a.device.offlineAttachments)
     } catch (e) {
       a.toast(`Couldn't open the local database: ${(e as Error).message}`, 'error')
     }
@@ -75,6 +76,11 @@
       bootTimer = setTimeout(saveBoot, 2000)
     })
     a.backend.on((e) => {
+      if (e.ev === 'quota') {
+        a.device.offlineAttachments = 'on-demand'
+        a.saveDevice()
+        a.toast(`This device is out of storage space. Attachments are now downloaded on demand${e.evicted ? ` (${e.evicted} removed from this device; they're safe on the server)` : ''}.`, 'error')
+      }
       if (e.ev === 'fatal' && /invalid token|revoked|unauthori[sz]ed/i.test(e.message)) void logout()
     })
   }

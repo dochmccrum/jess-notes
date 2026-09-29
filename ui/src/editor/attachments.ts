@@ -74,9 +74,36 @@ export interface AddOptions {
   pasted?: boolean
 }
 
+const isApple = () => typeof navigator !== 'undefined' && /iPad|iPhone|Macintosh/.test(navigator.userAgent)
+
+/**
+ * HEIC/HEIF on Apple devices becomes JPEG (quality 0.92) using the platform decoder, so every
+ * device can show it (DESIGN §7.3; the only recompression Jess does). Elsewhere, or if decoding
+ * fails, the file is kept as it is.
+ */
+export async function heicToJpeg(f: File): Promise<File> {
+  const heic = /\.(heic|heif)$/i.test(f.name) || /image\/hei[cf]/.test(f.type)
+  if (!heic || !isApple() || typeof createImageBitmap === 'undefined') return f
+  try {
+    const bmp = await createImageBitmap(f)
+    const c = document.createElement('canvas')
+    c.width = bmp.width
+    c.height = bmp.height
+    c.getContext('2d')!.drawImage(bmp, 0, 0)
+    bmp.close()
+    const blob: Blob | null = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92))
+    if (!blob) return f
+    const name = f.name ? f.name.replace(/\.(heic|heif)$/i, '.jpg') : 'image.jpg'
+    return new File([blob], name, { type: 'image/jpeg', lastModified: f.lastModified })
+  } catch {
+    return f
+  }
+}
+
 /** Inserts embeds for `files` at the selection and imports them. */
-export async function addAttachments(app: AppState, view: EditorView, noteId: string, files: File[], opts: AddOptions = {}) {
-  if (!files.length) return
+export async function addAttachments(app: AppState, view: EditorView, noteId: string, files0: File[], opts: AddOptions = {}) {
+  if (!files0.length) return
+  const files = await Promise.all(files0.map(heicToJpeg))
   const settings = app.entries.get(VAULT_SETTINGS_ID)?.props ?? {}
   const folderSegs = attachmentFolder(settings.attachmentFolderPath as string | undefined, app.entries.folderOf(noteId))
   const useMd = settings.useMarkdownLinks === true

@@ -65,6 +65,7 @@
       void import('./components/Settings.svelte')
       void import('./components/TrashView.svelte')
       void import('./components/ImportExport.svelte')
+      void import('./components/AttachmentsPanel.svelte')
     })
   })
 
@@ -138,6 +139,8 @@
   {#await import('./components/Settings.svelte') then { default: Settings }}<Settings {app} {logout} />{/await}
 {:else if app.overlay === 'import'}
   {#await import('./components/ImportExport.svelte') then { default: ImportExport }}<ImportExport {app} />{/await}
+{:else if app.overlay === 'attachments'}
+  {#await import('./components/AttachmentsPanel.svelte') then { default: AttachmentsPanel }}<AttachmentsPanel {app} />{/await}
 {:else if app.overlay === 'trash'}
   {#await import('./components/TrashView.svelte') then { default: TrashView }}<TrashView {app} />{/await}
 {:else if app.overlay === 'move' && app.overlayArg}

@@ -19,6 +19,12 @@ jobs:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - name: pdfium (PDF thumbnails/text in tests; same build as the image)
+        run: |
+          curl -fsSL -o /tmp/p.whl https://files.pythonhosted.org/packages/d3/7c/74a2fb48e5b0d2402d9ca64b39074c722d67e9a8a2c58449a843a8c2329a/pypdfium2-5.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "81df25c1ab4c13ff773102d3cbea1967511d079123b067fc077bd0c4d57d91d8  /tmp/p.whl" | sha256sum -c -
+          unzip -q -j /tmp/p.whl 'pypdfium2_raw/libpdfium.so' -d "$HOME/pdfium"
+          echo "JESS_PDFIUM_LIB=$HOME/pdfium/libpdfium.so" >> "$GITHUB_ENV"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -66,6 +72,12 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable
+      - name: pdfium (PDF thumbnails/text in tests; same build as the image)
+        run: |
+          curl -fsSL -o /tmp/p.whl https://files.pythonhosted.org/packages/d3/7c/74a2fb48e5b0d2402d9ca64b39074c722d67e9a8a2c58449a843a8c2329a/pypdfium2-5.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "81df25c1ab4c13ff773102d3cbea1967511d079123b067fc077bd0c4d57d91d8  /tmp/p.whl" | sha256sum -c -
+          unzip -q -j /tmp/p.whl 'pypdfium2_raw/libpdfium.so' -d "$HOME/pdfium"
+          echo "JESS_PDFIUM_LIB=$HOME/pdfium/libpdfium.so" >> "$GITHUB_ENV"
       - name: wasm-bindgen-cli (must match the wasm-bindgen crate)
         run: cargo install --locked wasm-bindgen-cli --version 0.2.129
       - run: sudo apt-get update && sudo apt-get install -y binaryen

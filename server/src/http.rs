@@ -1256,10 +1256,13 @@ async fn blob_derived(
         "display" => ("display", "image/jpeg"),
         "thumb" => ("thumb", "image/jpeg"),
         "pdf-thumb" => ("pdf-thumb", "image/jpeg"),
-        "pdf-text" => ("pdf-text", "application/zstd"),
+        "pdf-text" => ("pdf-text", "application/json"),
         _ => return err(StatusCode::NOT_FOUND, "unknown derived kind"),
     };
     let p = app.cfg.data_dir.join("derived").join(dir).join(h.to_hex());
+    if dir == "pdf-text" {
+        return pdf_text(p, &headers, &h).await;
+    }
     let mime =
         if dir != "pdf-text" && std::path::Path::new(&format!("{}.png", p.display())).exists() {
             "image/png"
@@ -1279,6 +1282,46 @@ async fn blob_derived(
         mime,
     )
     .await
+}
+
+/// PDF text is stored zstd-compressed; browsers can't decode zstd everywhere, so it is served
+/// as JSON, gzip-encoded when the client accepts it (`{"pages": ["…", …]}`).
+async fn pdf_text(p: std::path::PathBuf, headers: &HeaderMap, h: &Hash) -> Response {
+    let gzip = headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(',').any(|e| e.trim().starts_with("gzip")))
+        .unwrap_or(false);
+    let r = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<u8>> {
+        let raw = zstd::decode_all(std::fs::File::open(&p)?)?;
+        if !gzip {
+            return Ok(raw);
+        }
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, &raw)?;
+        enc.finish()
+    })
+    .await;
+    match r {
+        Ok(Ok(body)) => {
+            let mut b = Response::builder()
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                )
+                .header(header::ETAG, format!("\"{}-pdf-text\"", h.to_hex()))
+                .header(header::VARY, "accept-encoding");
+            if gzip {
+                b = b.header(header::CONTENT_ENCODING, "gzip");
+            }
+            b.body(Body::from(body)).expect("response")
+        }
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            err(StatusCode::NOT_FOUND, "not derived yet")
+        }
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could not read pdf text"),
+    }
 }
 
 // ---------------------------------------------------------------- static UI

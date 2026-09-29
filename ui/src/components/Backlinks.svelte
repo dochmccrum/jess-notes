@@ -9,6 +9,7 @@
 
   $effect(() => {
     void app.version
+    void app.indexVersion
     const target = id
     loading = true
     let live = true

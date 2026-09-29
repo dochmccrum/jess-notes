@@ -48,3 +48,32 @@ test('embedded PDFs: thumbnail then live viewer at the requested page', async ({
   await tall.getByRole('button', { name: 'Open' }).click()
   await expect(page.getByTestId('pdf-page')).toHaveValue('3', { timeout: 15_000 })
 })
+
+test('PDF text is searchable, per page', async ({ page }) => {
+  test.skip(!process.env.JESS_PDFIUM_LIB && !process.env.CI, 'needs pdfium on the server (JESS_PDFIUM_LIB)')
+  await login(page)
+  await page.keyboard.press(`${MOD}+Shift+f`)
+  const input = page.getByTestId('search-input')
+  const hit = page.getByTestId('search-results').locator('li', { hasText: 'page 3' }).filter({ hasText: 'Paper.pdf' })
+  // The server extracts text in the background; the client picks it up when it's ready.
+  await expect(async () => {
+    await input.fill('')
+    await input.fill('Paper page 3')
+    await expect(hit.first()).toBeVisible({ timeout: 2000 })
+  }).toPass({ timeout: 90_000 })
+  await hit.first().click()
+  await expect(page.getByTestId('pdf-page')).toHaveValue('3', { timeout: 15_000 })
+})
+
+test('attachments panel lists unreferenced files', async ({ page }) => {
+  await login(page)
+  await page.keyboard.press(`${MOD}+p`)
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.keyboard.type('manage attachments')
+  await page.keyboard.press('Enter')
+  const list = page.getByTestId('attachments-list')
+  await expect(list).toContainText('shared.png')
+  await page.getByTestId('attachments-filter').selectOption('unreferenced')
+  await expect(list).toContainText('orphan.gif', { timeout: 15_000 })
+  await expect(list).not.toContainText('shared.png')
+})

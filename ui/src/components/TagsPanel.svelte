@@ -9,6 +9,7 @@
 
   $effect(() => {
     void app.version
+    void app.indexVersion
     const t = setTimeout(async () => {
       const v = await app.backend.tags()
       tags = v

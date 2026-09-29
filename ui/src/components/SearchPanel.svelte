@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { AppState } from '../stores/app.svelte'
   import { displayName } from '../lib/names'
+  import { untrack } from 'svelte'
 
   let { app }: { app: AppState } = $props()
   let q = $state('')
-  let hits: { id: string; snippet: string }[] = $state([])
+  let hits: { id: string; snippet: string; page?: number }[] = $state([])
   let busy = $state(false)
   let input: HTMLInputElement | undefined = $state()
 
@@ -13,12 +14,13 @@
   })
 
   $effect(() => {
+    void app.indexVersion // re-run when edits have been indexed
     const query = q.trim()
     if (!query) {
       hits = []
       return
     }
-    busy = true
+    busy = untrack(() => !hits.length)
     let live = true
     const t = setTimeout(async () => {
       const r = await app.backend.search(query)
@@ -51,15 +53,15 @@
 </script>
 
 <div class="search">
-  <input bind:this={input} type="search" data-sidebar-focus="search" placeholder="Search notes" bind:value={q} aria-label="Search notes" data-testid="search-input" />
+  <input bind:this={input} type="search" data-sidebar-focus="search" placeholder="Search notes and PDFs" bind:value={q} aria-label="Search notes" data-testid="search-input" />
   {#if busy && !hits.length}<p class="muted">Searching…</p>{/if}
   <ul role="list" data-testid="search-results">
-    {#each hits as h (h.id)}
+    {#each hits as h (h.id + ':' + (h.page ?? 0))}
       {@const e = app.entries.get(h.id)}
       {#if e}
         <li>
-          <button onclick={() => app.open(h.id)}>
-            <strong>{displayName(e.name)}</strong>
+          <button onclick={() => app.open(h.id, h.page ? `#page=${h.page}` : null)}>
+            <strong>{displayName(e.name)}{#if h.page}<span class="page"> · page {h.page}</span>{/if}</strong>
             <span class="snip">{#each parts(h.snippet) as p}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</span>
           </button>
         </li>
@@ -70,6 +72,11 @@
 </div>
 
 <style>
+  .page {
+    font-weight: normal;
+    color: var(--fg-3);
+    font-size: 12px;
+  }
   .search {
     display: flex;
     flex-direction: column;

@@ -50,6 +50,7 @@ export type BackendEvent =
   | { ev: 'rejected'; opId: number; reason: string }
   | { ev: 'fatal'; message: string }
   | { ev: 'indexed' }
+  | { ev: 'quota'; evicted: number }
 
 export interface Backend {
   readonly entries: EntryStore
@@ -61,13 +62,15 @@ export interface Backend {
   backlinks(id: string): Promise<Backlink[]>
   tags(): Promise<{ name: string; srcs: string[] }[]>
   notesWithTag(tag: string): Promise<string[]>
-  search(q: string): Promise<{ id: string; snippet: string }[]>
+  search(q: string): Promise<{ id: string; snippet: string; page?: number }[]>
   /** Streams bytes into local storage; with a name, also reads its facts (mime, dimensions). */
   ingest(file: Blob, name?: string): Promise<{ hash: string; size: number; header: Uint8Array; info: BlobInfo }>
   /** Queue a blob download at a priority (0 open doc, 1 embed, 2 recent, 3 prefetch). */
   blobWant(hash: string, size: number, prio: number): void
   /** Bytes of a blob (`orig`) or derived variant, local first; null if unavailable. */
   blobRange(hash: string, begin: number, end: number): Promise<Uint8Array>
+  /** Link counts per attachment id (live and trashed notes). */
+  attachmentRefs(): Promise<Record<string, number>>
   blobRead(hash: string, variant: string): Promise<{ bytes: Uint8Array; mime: string | null } | null>
   importer: {
     plan(src: ImportSource, opts: { hidePdfs?: boolean; conflict?: string }): Promise<ImportPlanView>
@@ -80,6 +83,8 @@ export interface Backend {
   }
   on(cb: (e: BackendEvent) => void): () => void
   setForeground(f: boolean): void
+  /** Device setting (§7.5): keep every attachment offline, or only what's used (LRU-capped). */
+  setOfflineMode(mode: 'everything' | 'on-demand'): void
   online(): void
   offline(): void
   flush(): Promise<void>

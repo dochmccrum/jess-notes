@@ -25,6 +25,7 @@
     app.saveDevice()
     app.version++
     applyTheme(app.device.theme)
+    app.backend.setOfflineMode(app.device.offlineAttachments)
   }
 
   async function makePair() {
@@ -124,6 +125,7 @@
   <section class="row">
     <button class="btn" onclick={() => (app.overlay = 'trash')}>Open trash</button>
     <button class="btn" onclick={() => (app.overlay = 'import')}>Import / export…</button>
+    <button class="btn" onclick={() => (app.overlay = 'attachments')}>Attachments…</button>
     <button class="btn danger" onclick={() => void doLogout()}>Log out of this device</button>
     <button class="btn danger" onclick={() => (erasing = true)} data-testid="erase">Erase this device's local copy…</button>
   </section>

@@ -12,6 +12,7 @@ export type WorkerEvent =
   | { ev: 'rejected'; opId: number; reason: string }
   | { ev: 'progress'; task: string; done: number; total: number; label?: string }
   | { ev: 'indexed' }
+  | { ev: 'quota'; evicted: number }
 
 export interface InitResult {
   entries: EntryMeta[]

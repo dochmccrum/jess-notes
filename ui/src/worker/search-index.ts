@@ -14,15 +14,20 @@ export interface IndexedLink {
   embed: boolean
 }
 
+/** Bump to rebuild the index from scratch (it is derived data). */
+const SCHEMA_VERSION = 2
+
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY, hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pdfs(id TEXT PRIMARY KEY, blob TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS links(src TEXT NOT NULL, ord INTEGER NOT NULL, target TEXT NOT NULL, tkey TEXT NOT NULL, markdown INTEGER NOT NULL, embed INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS links_src ON links(src);
 CREATE INDEX IF NOT EXISTS links_key ON links(tkey);
 CREATE TABLE IF NOT EXISTS tags(src TEXT NOT NULL, name TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tags_src ON tags(src);
 CREATE INDEX IF NOT EXISTS tags_name ON tags(name);
-CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(id UNINDEXED, name, body, tokenize = 'unicode61 remove_diacritics 2');
+CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(id UNINDEXED, page UNINDEXED, name, body, tokenize = 'unicode61 remove_diacritics 2');
 `
 
 export function targetKey(target: string): string {
@@ -52,7 +57,17 @@ export class SearchIndex {
     } catch {
       db = new sqlite3.oo1.DB(':memory:')
     }
+    let version = 0
+    try {
+      version = Number(db.selectValue("SELECT v FROM meta WHERE k = 'schema'") ?? 0)
+    } catch {
+      /* no meta table: an old index */
+    }
+    if (version !== SCHEMA_VERSION) {
+      for (const t of ['fts', 'links', 'tags', 'notes', 'pdfs', 'meta']) db.exec(`DROP TABLE IF EXISTS ${t}`)
+    }
     db.exec(SCHEMA)
+    db.exec({ sql: "INSERT OR REPLACE INTO meta(k, v) VALUES ('schema', ?)", bind: [String(SCHEMA_VERSION)] })
     const ix = new SearchIndex(db)
     ix.persistent = persistent
     return ix
@@ -80,14 +95,31 @@ export class SearchIndex {
         this.db.exec({ sql: 'INSERT INTO links(src, ord, target, tkey, markdown, embed) VALUES (?,?,?,?,?,?)', bind: [id, i, l.target, targetKey(l.target), l.syntax === 'markdown' ? 1 : 0, l.embed ? 1 : 0] })
       })
       for (const t of new Set(ex.tags.map((t) => t.name.toLowerCase()))) this.db.exec({ sql: 'INSERT INTO tags(src, name) VALUES (?, ?)', bind: [id, t] })
-      this.db.exec({ sql: 'INSERT INTO fts(id, name, body) VALUES (?, ?, ?)', bind: [id, name, text] })
+      this.db.exec({ sql: 'INSERT INTO fts(id, page, name, body) VALUES (?, NULL, ?, ?)', bind: [id, name, text] })
       this.db.exec({ sql: 'INSERT OR REPLACE INTO notes(id, hash) VALUES (?, ?)', bind: [id, h] })
     })
     return true
   }
 
+  /** The blob whose text is indexed for each PDF entry. */
+  indexedPdfs(): Map<string, string> {
+    return new Map(this.rows('SELECT id, blob FROM pdfs').map((r) => [r.id, r.blob]))
+  }
+
+  /** Indexes a PDF's text, one row per page (DESIGN §8: server-extracted). */
+  upsertPdf(id: string, name: string, blob: string, pages: string[]) {
+    this.db.transaction(() => {
+      this.db.exec({ sql: 'DELETE FROM fts WHERE id = ?', bind: [id] })
+      pages.forEach((text, i) => {
+        if (text.trim()) this.db.exec({ sql: 'INSERT INTO fts(id, page, name, body) VALUES (?, ?, ?, ?)', bind: [id, i + 1, name, text] })
+      })
+      this.db.exec({ sql: 'INSERT OR REPLACE INTO pdfs(id, blob) VALUES (?, ?)', bind: [id, blob] })
+    })
+  }
+
   remove(id: string) {
     this.db.transaction(() => {
+      this.db.exec({ sql: 'DELETE FROM pdfs WHERE id = ?', bind: [id] })
       for (const t of ['links', 'tags']) this.db.exec({ sql: `DELETE FROM ${t} WHERE src = ?`, bind: [id] })
       this.db.exec({ sql: 'DELETE FROM fts WHERE id = ?', bind: [id] })
       this.db.exec({ sql: 'DELETE FROM notes WHERE id = ?', bind: [id] })
@@ -117,7 +149,7 @@ export class SearchIndex {
   }
 
   /** Full-text search; every word is a prefix query. */
-  search(q: string, limit = 50): { id: string; snippet: string }[] {
+  search(q: string, limit = 50): { id: string; snippet: string; page?: number }[] {
     const words = q
       .normalize('NFC')
       .split(/\s+/)
@@ -126,13 +158,13 @@ export class SearchIndex {
     if (!words.length) return []
     const match = words.map((w) => `"${w}"*`).join(' ')
     try {
-      return this.rows(`SELECT id, snippet(fts, 2, '\u0002', '\u0003', '…', 12) AS s FROM fts WHERE fts MATCH ? ORDER BY bm25(fts, 0.0, 5.0, 1.0) LIMIT ?`, [match, limit]).map((r) => ({ id: r.id, snippet: r.s }))
+      return this.rows(`SELECT id, page, snippet(fts, 3, '\u0002', '\u0003', '…', 12) AS s FROM fts WHERE fts MATCH ? ORDER BY bm25(fts, 0.0, 0.0, 5.0, 1.0) LIMIT ?`, [match, limit]).map((r) => ({ id: r.id, snippet: r.s, ...(r.page ? { page: r.page } : {}) }))
     } catch {
       return []
     }
   }
 
   clear() {
-    this.db.exec('DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM fts;')
+    this.db.exec('DELETE FROM notes; DELETE FROM pdfs; DELETE FROM links; DELETE FROM tags; DELETE FROM fts;')
   }
 }

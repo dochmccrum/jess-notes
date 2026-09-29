@@ -244,8 +244,17 @@ fn server_derives_imported_blobs() {
             text = get(&pdf, "pdf-text");
             std::thread::sleep(Duration::from_millis(200));
         }
-        let (_, bytes) = text.expect("pdf text derived");
-        assert!(jess_server::derive::read_pdf_text(&bytes).is_some());
+        let (ct, bytes) = text.expect("pdf text derived");
+        assert_eq!(ct, "application/json");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            v["pages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p.as_str().unwrap().contains("manual") || !p.as_str().unwrap().is_empty()),
+            "{v}"
+        );
         assert!(get(&pdf, "pdf-thumb").is_some());
     }
     let status: serde_json::Value = ureq::get(&srv.url("/api/admin/status"))

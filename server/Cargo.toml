@@ -30,6 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 argon2 = "0.5"
 rand = "0.8"
 zstd = "0.13"
+flate2 = "1"
 libc = "0.2"
 # Derivation subprocess only (DESIGN §8): display/thumb variants and PDF thumb/text.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }

@@ -75,6 +75,12 @@
     }
   })
 
+  // Another link or search hit into this same PDF: jump to its page.
+  $effect(() => {
+    const m = app.pendingSubpath ? /page=(\d+)/.exec(app.pendingSubpath) : null
+    if (m && viewer) viewer.goto(Number(m[1]))
+  })
+
   async function toggleFind() {
     findOpen = !findOpen
     await tick()

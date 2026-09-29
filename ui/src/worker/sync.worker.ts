@@ -97,6 +97,8 @@ async function apply(o: Output) {
     const list = JSON.parse(core.entriesJson([...new Set(entryIds)])) as (EntryMeta | { id: string; deleted: true })[]
     post({ ev: 'entries', list })
     for (const e of list) if ('kind' in e && e.kind === 'markdown') markDirty(e.id)
+    if (index && list.some((e) => !('kind' in e) || e.kind === 'pdf')) schedulePdfIndex()
+    if (list.some((e) => 'blob' in e && e.blob)) schedulePolicy()
   }
   if (statusChanged) postStatus()
   schedulePump()
@@ -306,7 +308,12 @@ async function blobTask(t: { t: string; hash: string; size?: number; uploadId?: 
         const end = t.offset! + t.len! - 1
         const r = await fetch(api(`/api/blobs/${t.hash}`), { headers: authHeaders({ range: `bytes=${t.offset}-${end}` }) })
         if (!r.ok) return { t: 'range', hash: t.hash, index: t.index, ok: false }
-        await putChunk(db, t.hash, t.index!, new Uint8Array(await r.arrayBuffer()))
+        try {
+          await putChunk(db, t.hash, t.index!, new Uint8Array(await r.arrayBuffer()))
+        } catch (e) {
+          if (isQuota(e)) void onQuota()
+          throw e
+        }
         return { t: 'range', hash: t.hash, index: t.index, ok: true }
       }
       case 'presence': {
@@ -424,16 +431,109 @@ async function ensureIndex(): Promise<SearchIndex> {
       }
       await reindexDirty()
       post({ ev: 'indexed' })
+      schedulePdfIndex(0)
     })()
   }
   await indexing
   return index!
 }
 
+// ---------------------------------------------------------------- offline attachments (§7.5)
+// `everything`: every attachment in the vault is kept on this device (background prefetch, P3).
+// `on-demand`: only what was opened or shown, capped by an LRU (1 GB on the web). Blobs the server
+// hasn't confirmed are never evicted (core enforces that).
+let offlineMode: 'everything' | 'on-demand' = 'everything'
+const ON_DEMAND_CAP = 1 << 30
+let policyTimer: ReturnType<typeof setTimeout> | undefined
+function schedulePolicy(delay = 3000) {
+  clearTimeout(policyTimer)
+  policyTimer = setTimeout(() => void storagePolicy(), delay)
+}
+
+async function evictTo(cap: number) {
+  const victims = core.blobEvictionCandidates(cap) as string[]
+  for (const h of victims) {
+    const w = core.blobEvict(h) as Write[] | undefined
+    if (!w) continue
+    await run(() => ({ writes: w, send: [], events: [] }))
+    await deleteChunks(db, h)
+  }
+  return victims.length
+}
+
+async function storagePolicy() {
+  if (!core) return
+  if (offlineMode === 'everything') {
+    const writes: Write[] = []
+    for (const e of JSON.parse(core.viewJson()) as EntryMeta[]) {
+      if (!e.blob || e.purged || !e.blobInfo?.size || core.blobIsLocal(e.blob)) continue
+      writes.push(...(core.blobWant(e.blob, e.blobInfo.size, 3, Date.now()) as Write[]))
+    }
+    if (writes.length) await run(() => ({ writes, send: [], events: [] }))
+  } else await evictTo(ON_DEMAND_CAP)
+  schedulePump()
+}
+
+/** Storage is full: switch to on-demand, free space, and tell the UI (a banner). */
+async function onQuota() {
+  if (offlineMode === 'everything') offlineMode = 'on-demand'
+  let cap = ON_DEMAND_CAP / 2
+  try {
+    const est = await navigator.storage.estimate()
+    if (est.usage) cap = Math.min(cap, est.usage * 0.7)
+  } catch {
+    /* no estimate */
+  }
+  const n = await evictTo(cap)
+  post({ ev: 'quota', evicted: n })
+}
+
+const isQuota = (e: unknown) => e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+
+// PDF text (DESIGN §8): extracted once on the server, fetched here at the lowest priority and
+// indexed per page. Not derived yet (404) → try again later.
+let pdfTimer: ReturnType<typeof setTimeout> | undefined
+let pdfIndexing = false
+function schedulePdfIndex(delay = 2000) {
+  clearTimeout(pdfTimer)
+  pdfTimer = setTimeout(() => void indexPdfs(), delay)
+}
+
+async function indexPdfs() {
+  if (!index || !token || pdfIndexing) return
+  pdfIndexing = true
+  let retry = false
+  try {
+    const live = (JSON.parse(core.viewJson()) as EntryMeta[]).filter((e) => e.kind === 'pdf' && e.blob && !e.purged && !e.trashed)
+    const liveIds = new Set(live.map((e) => e.id))
+    const known = index.indexedPdfs()
+    for (const id of known.keys()) if (!liveIds.has(id)) index.remove(id)
+    for (const e of live) {
+      if (known.get(e.id) === e.blob) continue
+      try {
+        const r = await fetch(api(`/api/blobs/${e.blob}/derived/pdf-text`), { headers: authHeaders() })
+        if (r.status === 404) {
+          retry = true
+          continue
+        }
+        if (!r.ok) throw new Error(String(r.status))
+        const v = (await r.json()) as { pages: string[] }
+        index.upsertPdf(e.id, e.name, e.blob!, v.pages ?? [])
+      } catch {
+        retry = true // offline or server trouble
+      }
+    }
+  } finally {
+    pdfIndexing = false
+  }
+  if (retry) schedulePdfIndex(60_000)
+}
+
 async function reindexDirty() {
   if (!index) return
   const ids = [...dirtyDocs]
   dirtyDocs.clear()
+  if (!ids.length) return
   for (const id of ids) {
     const e = (JSON.parse(core.entriesJson([id])) as EntryMeta[])[0]
     if (!e || 'deleted' in e || e.purged || e.kind !== 'markdown' || e.blob) {
@@ -444,6 +544,8 @@ async function reindexDirty() {
     const ex = JSON.parse(extract(text)) as Extracted
     await index.upsert(id, e.name.replace(/\.md$/i, ''), text, ex)
   }
+  // Panels showing index-derived data (backlinks, tags) refresh on this.
+  post({ ev: 'indexed' })
 }
 
 function nameKeysOf(e: EntryMeta): string[] {
@@ -467,6 +569,30 @@ async function backlinks(id: string) {
     } else out.set(l.src, { src: l.src, count: 1, embed: l.embed })
   }
   return [...out.values()]
+}
+
+/** How many links (from live or trashed notes) resolve to each attachment (DESIGN §7.8). */
+async function attachmentRefs(): Promise<Record<string, number>> {
+  const ix = await ensureIndex()
+  await reindexDirty()
+  const atts = (JSON.parse(core.viewJson()) as EntryMeta[]).filter((e) => (e.kind === 'media' || e.kind === 'pdf') && !e.purged)
+  const refs: Record<string, number> = {}
+  const keys = new Set<string>()
+  for (const a of atts) {
+    refs[a.id] = 0
+    for (const k of nameKeysOf(a)) keys.add(k)
+  }
+  const cache = new Map<string, string | null>()
+  for (const l of ix.linksByKeys([...keys])) {
+    const k = `${l.src}\u0000${l.syntax}\u0000${l.target}`
+    let r = cache.get(k)
+    if (r === undefined) {
+      r = core.resolve(l.target, l.syntax === 'markdown', l.src) ?? null
+      cache.set(k, r)
+    }
+    if (r && r in refs) refs[r]++
+  }
+  return refs
 }
 
 // ---------------------------------------------------------------- import / export
@@ -774,11 +900,15 @@ const methods: Record<string, (...a: never[]) => unknown> = {
   resolve(target: string, markdown: boolean, src: string | null) {
     return core.resolve(target, markdown, src ?? undefined) ?? null
   },
-  backlinks(id: string) {
+  async backlinks(id: string) {
+    await ensureIndex()
+    await reindexDirty()
     return backlinks(id)
   },
   async tags() {
-    return (await ensureIndex()).tags()
+    const ix = await ensureIndex()
+    await reindexDirty()
+    return ix.tags()
   },
   async notesWithTag(t: string) {
     return (await ensureIndex()).notesWithTag(t)
@@ -817,6 +947,13 @@ const methods: Record<string, (...a: never[]) => unknown> = {
     schedulePump()
   },
   /** Bytes [begin, end) of a blob for PDF.js's range transport. */
+  attachmentRefs() {
+    return attachmentRefs()
+  },
+  setOfflineMode(mode: 'everything' | 'on-demand') {
+    offlineMode = mode
+    schedulePolicy(mode === 'everything' ? 5000 : 0)
+  },
   async blobRange(hash: string, begin: number, end: number): Promise<Uint8Array> {
     return blobRange(hash, begin, end)
   },
