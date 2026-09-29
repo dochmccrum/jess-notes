@@ -3,10 +3,10 @@
 // block widgets from a StateField updated incrementally (map + rescan touched blocks).
 
 import { syntaxTree } from '@codemirror/language'
-import { EditorState, RangeSetBuilder, StateField, type Extension, type Range } from '@codemirror/state'
+import { EditorState, RangeSetBuilder, StateEffect, StateField, type Extension, type Range } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
-import { renderInto } from './renderers'
+import { getRenderer, renderInto } from './renderers'
 
 export interface LinkHandlers {
   resolve(target: string, markdown: boolean): string | null
@@ -25,6 +25,11 @@ function activeLines(state: EditorState): Set<number> {
 }
 
 const hide = Decoration.replace({})
+
+/** Dispatch when link targets may resolve differently (entries changed): links and embeds are
+ * re-resolved without any document change. */
+export const refreshLinks = StateEffect.define<null>()
+const hasRefresh = (tr: { effects: readonly StateEffect<unknown>[] }) => tr.effects.some((e) => e.is(refreshLinks))
 
 class LinkWidget extends WidgetType {
   constructor(
@@ -80,7 +85,9 @@ class RenderWidget extends WidgetType {
     return false
   }
   get estimatedHeight() {
-    return this.block ? 40 : -1
+    if (!this.block) return -1
+    const est = getRenderer(this.renderer)?.estimateSize?.(this.ctx as never)
+    return est ? est.height : 40
   }
 }
 
@@ -110,6 +117,12 @@ function mdLinkParts(state: EditorState, node: SyntaxNode) {
   const marks = node.getChildren('LinkMark')
   const text = marks.length >= 2 ? state.sliceDoc(marks[0].to, marks[1].from) : ''
   return { target, subpath: hash >= 0 ? raw.slice(hash) : null, text, url }
+}
+
+/** The node is the whole of its paragraph (then it's a block widget, not an inline one). */
+function ownsParagraph(state: EditorState, n: SyntaxNode): boolean {
+  const p = n.parent
+  return !!p && p.name === 'Paragraph' && p.firstChild?.from === n.from && !n.nextSibling && state.sliceDoc(p.from, p.to).trim() === state.sliceDoc(n.from, n.to)
 }
 
 function isExternal(t: string) {
@@ -169,8 +182,7 @@ function inlineDecos(view: EditorView, h: LinkHandlers): DecorationSet {
               out.push(Decoration.mark({ class: 'cm-embed-src' }).range(n.from, n.to))
               return false
             }
-            const line = state.doc.lineAt(n.from)
-            if (line.text.trim() === state.sliceDoc(n.from, n.to)) return false // block field renders it
+            if (ownsParagraph(state, n.node)) return false // the block field renders it
             const { target, alias, subpath } = wikiParts(state, n.node)
             const r = h.embedRenderer?.(target, h.resolve(target, false), subpath, alias) ?? { id: 'transclusion', ctx: { source: target, subpath } }
             out.push(Decoration.replace({ widget: new RenderWidget(r.id, JSON.stringify(r.ctx), r.ctx, false) }).range(n.from, n.to))
@@ -190,8 +202,7 @@ function inlineDecos(view: EditorView, h: LinkHandlers): DecorationSet {
           }
           case 'Image': {
             if (onActive) return false
-            const line = state.doc.lineAt(n.from)
-            if (line.text.trim() === state.sliceDoc(n.from, n.to)) return false
+            if (ownsParagraph(state, n.node)) return false
             const { target, subpath, text } = mdLinkParts(state, n.node)
             const r = h.embedRenderer?.(target, isExternal(target) ? null : h.resolve(target, true), subpath, text) ?? null
             if (r) out.push(Decoration.replace({ widget: new RenderWidget(r.id, JSON.stringify(r.ctx), r.ctx, false) }).range(n.from, n.to))
@@ -237,8 +248,7 @@ function blockDecosIn(state: EditorState, from: number, to: number, h: LinkHandl
       out.push(Decoration.replace({ widget: new RenderWidget('math', 'D' + tex, { source: tex, display: true }, true), block: true }).range(c.from, c.to))
     } else if (c.name === 'Paragraph') {
       const only = c.firstChild
-      if (!only || only.nextSibling || (only.name !== 'Embed' && only.name !== 'Image')) continue
-      if (state.sliceDoc(c.from, c.to).trim() !== state.sliceDoc(only.from, only.to)) continue
+      if (!only || (only.name !== 'Embed' && only.name !== 'Image') || !ownsParagraph(state, only)) continue
       if (touches(c.from, c.to)) continue
       let r: { id: string; ctx: Record<string, unknown> } | null
       if (only.name === 'Embed') {
@@ -258,6 +268,7 @@ function blockField(h: LinkHandlers) {
   return StateField.define<DecorationSet>({
     create: (state) => Decoration.set(blockDecosIn(state, 0, state.doc.length, h), true),
     update(decos, tr) {
+      if (hasRefresh(tr)) return Decoration.set(blockDecosIn(tr.state, 0, tr.state.doc.length, h), true)
       if (!tr.docChanged && !tr.selection && syntaxTree(tr.startState) === syntaxTree(tr.state)) return decos
       // Incremental: map, then rescan only blocks touched by the change or the selection.
       let lo = Infinity
@@ -293,7 +304,7 @@ export function livePreview(h: LinkHandlers): Extension {
         this.decorations = inlineDecos(view, h)
       }
       update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged || u.selectionSet || syntaxTree(u.startState) !== syntaxTree(u.state)) this.decorations = inlineDecos(u.view, h)
+        if (u.docChanged || u.viewportChanged || u.selectionSet || syntaxTree(u.startState) !== syntaxTree(u.state) || u.transactions.some(hasRefresh)) this.decorations = inlineDecos(u.view, h)
       }
     },
     {

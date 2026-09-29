@@ -62,7 +62,12 @@ export interface Backend {
   tags(): Promise<{ name: string; srcs: string[] }[]>
   notesWithTag(tag: string): Promise<string[]>
   search(q: string): Promise<{ id: string; snippet: string }[]>
-  ingest(file: Blob): Promise<{ hash: string; size: number; header: Uint8Array }>
+  /** Streams bytes into local storage; with a name, also reads its facts (mime, dimensions). */
+  ingest(file: Blob, name?: string): Promise<{ hash: string; size: number; header: Uint8Array; info: BlobInfo }>
+  /** Queue a blob download at a priority (0 open doc, 1 embed, 2 recent, 3 prefetch). */
+  blobWant(hash: string, size: number, prio: number): void
+  /** Bytes of a blob (`orig`) or derived variant, local first; null if unavailable. */
+  blobRead(hash: string, variant: string): Promise<{ bytes: Uint8Array; mime: string | null } | null>
   importer: {
     plan(src: ImportSource, opts: { hidePdfs?: boolean; conflict?: string }): Promise<ImportPlanView>
     run(resolutions: Record<string, 'Overwrite' | 'KeepBoth' | 'Skip'>, applyAll?: 'Overwrite' | 'KeepBoth' | 'Skip'): Promise<Record<string, unknown>>

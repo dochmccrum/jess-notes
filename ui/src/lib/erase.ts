@@ -27,6 +27,11 @@ export async function eraseIfRequested(): Promise<void> {
     /* no OPFS */
   }
   try {
+    for (const k of await caches.keys()) if (k.startsWith('jess-derived')) await caches.delete(k)
+  } catch {
+    /* no Cache Storage */
+  }
+  try {
     const dev = JSON.parse(localStorage.getItem('jess.device') ?? '{}')
     delete dev.lastNote
     delete dev.expanded

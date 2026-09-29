@@ -289,3 +289,46 @@ dialog::backdrop {
     animation: none !important;
   }
 }
+
+/* ---- attachment embeds */
+.jess-img img {
+  display: inline-block;
+  vertical-align: bottom;
+  border-radius: 4px;
+  cursor: zoom-in;
+  background: var(--bg-2);
+}
+.jess-img-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 2.2em;
+  padding: 0 10px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--fg-3);
+  font-size: 13px;
+}
+.jess-img-placeholder.unresolved,
+.jess-img-placeholder.missing {
+  color: var(--unresolved);
+}
+.jess-img-placeholder.preparing {
+  animation: jess-pulse 1.2s ease-in-out infinite;
+}
+@keyframes jess-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jess-img-placeholder.preparing {
+    animation: none;
+  }
+}
+.jess-file-embed,
+.jess-pdf-embed-link {
+  color: var(--link);
+  cursor: pointer;
+}

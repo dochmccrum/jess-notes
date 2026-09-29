@@ -1,5 +1,7 @@
 // App-level UI state (runes) and vault operations shared by components and commands.
 import type { Backend } from '../backend/types'
+import type { EditorView } from '@codemirror/view'
+import type { ImageCtx } from '../editor/embeds'
 import { loadDevice, saveDevice, type DeviceSettings } from './device'
 import { newId } from '../lib/ids'
 import { freeName, nfc, validateName, isMarkdownName } from '../lib/names'
@@ -35,6 +37,10 @@ export class AppState {
   sidebarTab: 'files' | 'tags' | 'search' = $state('files')
   treeFocus: string | null = $state(null)
   pendingSubpath: string | null = $state(null)
+  /** The open note's editor (not reactive: set and read imperatively). */
+  editorView: EditorView | null = null
+  /** The image shown in the full-screen viewer. */
+  viewerImage: ImageCtx | null = $state(null)
 
   constructor(readonly backend: Backend) {
     backend.entries.subscribe(() => {

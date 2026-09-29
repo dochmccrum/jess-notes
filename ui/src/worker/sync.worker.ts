@@ -671,6 +671,29 @@ async function exportContent(item: { id: string; kind: string; hash?: string }):
   return new Uint8Array()
 }
 
+async function blobRead(hash: string, variant: string): Promise<{ bytes: Uint8Array; mime: string | null } | null> {
+  if (variant !== 'orig') {
+    try {
+      const r = await fetch(api(`/api/blobs/${hash}/derived/${variant}`), { headers: authHeaders() })
+      if (r.ok) return { bytes: new Uint8Array(await r.arrayBuffer()), mime: r.headers.get('content-type') }
+    } catch {
+      /* offline: fall through to the original */
+    }
+    if (variant === 'pdf-thumb' || variant === 'pdf-text') return null
+  }
+  if (core.blobIsLocal(hash)) {
+    const size = (await readSize(hash)) ?? 0
+    return { bytes: await readLocal(hash, 0, size), mime: null }
+  }
+  try {
+    const r = await fetch(api(`/api/blobs/${hash}`), { headers: authHeaders() })
+    if (!r.ok) return null
+    return { bytes: new Uint8Array(await r.arrayBuffer()), mime: r.headers.get('content-type') }
+  } catch {
+    return null
+  }
+}
+
 async function readSize(hash: string): Promise<number | null> {
   let size = 0
   for (let i = 0; ; i++) {
@@ -770,8 +793,22 @@ const methods: Record<string, (...a: never[]) => unknown> = {
     dropSocket()
     scheduleReconnect()
   },
-  async ingest(file: Blob) {
-    return ingestBlob(file)
+  async ingest(file: Blob, name?: string) {
+    const r = await ingestBlob(file)
+    const info = name ? JSON.parse(wasmBlobInfo(name, r.header, r.size)) : { size: r.size }
+    return { ...r, info }
+  },
+  /** Queue a download (priorities §7.4: 0 open, 1 embed, 2 recent, 3 prefetch). */
+  blobWant(hash: string, size: number, prio: number) {
+    void run(() => ({ writes: core.blobWant(hash, size, prio, Date.now()) as Write[], send: [], events: [] }))
+    schedulePump()
+  },
+  blobIsLocal(hash: string) {
+    return core.blobIsLocal(hash)
+  },
+  /** Bytes of a blob or a derived variant: local first, else an authenticated fetch. */
+  async blobRead(hash: string, variant: string): Promise<{ bytes: Uint8Array; mime: string | null } | null> {
+    return blobRead(hash, variant)
   },
   async importPlan(src: SourceInput, opts: { hidePdfs?: boolean; conflict?: string }) {
     return importPlan(src, opts)

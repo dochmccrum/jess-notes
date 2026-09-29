@@ -3,7 +3,7 @@ import * as Y from 'yjs'
 import { EntryStore } from '../stores/entries'
 import { writable } from '../lib/store'
 import type { Backend, BackendEvent, DocSession } from './types'
-import type { MetaIntent, SyncStatus } from '../lib/types'
+import type { BlobInfo, MetaIntent, SyncStatus } from '../lib/types'
 import type { InitResult, Res, WorkerEvent } from '../worker/protocol'
 
 export class WebBackend implements Backend {
@@ -108,8 +108,14 @@ export class WebBackend implements Backend {
   search(q: string) {
     return this.call<{ id: string; snippet: string }[]>('search', q)
   }
-  ingest(file: Blob) {
-    return this.call<{ hash: string; size: number; header: Uint8Array }>('ingest', file)
+  ingest(file: Blob, name?: string) {
+    return this.call<{ hash: string; size: number; header: Uint8Array; info: BlobInfo }>('ingest', file, name)
+  }
+  blobWant(hash: string, size: number, prio: number) {
+    this.worker.postMessage({ id: 0, method: 'blobWant', args: [hash, size, prio] })
+  }
+  blobRead(hash: string, variant: string) {
+    return this.call<{ bytes: Uint8Array; mime: string | null } | null>('blobRead', hash, variant)
   }
   importer = {
     plan: (src: Parameters<Backend['importer']['plan']>[0], opts: { hidePdfs?: boolean; conflict?: string }) => this.call<Awaited<ReturnType<Backend['importer']['plan']>>>('importPlan', src, opts),

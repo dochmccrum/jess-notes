@@ -25,7 +25,7 @@ export class MemoryBackend implements Backend {
       const cur = 'id' in o ? this.entries.get(o.id) : undefined
       switch (o.op) {
         case 'create':
-          changed.push({ id: o.id, kind: o.kind, parent: o.parent, name: o.name, trashed: null, visible: o.visible ?? true, blob: o.blob ?? null, created: o.created ?? null, modified: null, purged: false, seq: ++this.seq, props: {} })
+          changed.push({ id: o.id, kind: o.kind, parent: o.parent, name: o.name, trashed: null, visible: o.visible ?? true, blob: o.blob ?? null, blobInfo: o.blobInfo, created: o.created ?? null, modified: null, purged: false, seq: ++this.seq, props: {} })
           break
         case 'setName':
           if (cur) changed.push({ ...cur, name: o.name, seq: ++this.seq })
@@ -71,8 +71,14 @@ export class MemoryBackend implements Backend {
   async search() {
     return []
   }
-  async ingest(file: Blob) {
-    return { hash: '0'.repeat(64), size: file.size, header: new Uint8Array() }
+  async ingest(file: Blob, name = '') {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+    const hash = Array.from(d, (x) => x.toString(16).padStart(2, '0')).join('')
+    this.blobs.set(hash, bytes)
+    const ext = name.split('.').pop()?.toLowerCase() ?? ''
+    const mime = ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', pdf: 'application/pdf' } as Record<string, string>)[ext] ?? null
+    return { hash, size: file.size, header: bytes.slice(0, 65536), info: { size: file.size, mime } }
   }
   importer = {
     plan: async () => ({ report: { notes: 0, pdfs: 0, pdfs_hidden: 0, images: 0, other_media: 0, folders: 0, unchanged: 0, conflicts: 0, skipped: [], unresolved: [], collisions: [], warnings: [] }, items: [], settings: {} }),
@@ -87,6 +93,12 @@ export class MemoryBackend implements Backend {
     return () => {}
   }
   setForeground() {}
+  readonly blobs = new Map<string, Uint8Array>()
+  blobWant() {}
+  async blobRead(hash: string) {
+    const b = this.blobs.get(hash)
+    return b ? { bytes: b, mime: null } : null
+  }
   online() {}
   offline() {}
   async flush() {}

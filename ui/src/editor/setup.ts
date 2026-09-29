@@ -15,7 +15,6 @@ import { obsidian, mdTags } from './syntax'
 import { livePreview, linkAtPos, type LinkHandlers } from './livepreview'
 import { wikilinkSource } from './autocomplete'
 import type { EntryStore } from '../stores/entries'
-import { handleKey } from '../lib/commands'
 
 const highlight = HighlightStyle.define([
   { tag: t.heading1, class: 'cm-h1' },
@@ -74,6 +73,8 @@ export interface EditorOptions {
   entryId: string
   links: LinkHandlers
   readOnly?: boolean
+  /** Files pasted or dropped into the note. `pasted` = clipboard image data (no real name). */
+  onFiles?(view: EditorView, files: File[], pasted: boolean): void
 }
 
 export function createEditor(parent: HTMLElement, o: EditorOptions): EditorView {
@@ -103,10 +104,22 @@ export function createEditor(parent: HTMLElement, o: EditorOptions): EditorView 
       EditorState.readOnly.of(!!o.readOnly),
       EditorView.contentAttributes.of({ 'aria-label': 'Note editor', spellcheck: 'true', autocapitalize: 'sentences' }),
       EditorView.domEventHandlers({
-        keydown(e) {
-          // Global commands (Mod-o, Mod-p, Mod-\\…) work while typing.
-          if ((e.ctrlKey || e.metaKey || e.altKey || e.key.startsWith('F')) && handleKey(e)) return true
-          return false
+        paste(e, view) {
+          const files = [...(e.clipboardData?.files ?? [])]
+          if (!files.length || !o.onFiles) return false
+          e.preventDefault()
+          // Screenshots arrive as "image.png": those get Obsidian's "Pasted image …" name.
+          o.onFiles(view, files, files.every((f) => !f.name || /^image\.\w+$/.test(f.name)))
+          return true
+        },
+        drop(e, view) {
+          const files = [...(e.dataTransfer?.files ?? [])]
+          if (!files.length || !o.onFiles) return false
+          e.preventDefault()
+          const pos = view.posAtCoords({ x: e.clientX, y: e.clientY })
+          if (pos != null) view.dispatch({ selection: { anchor: pos } })
+          o.onFiles(view, files, false)
+          return true
         },
         mousedown(e, view) {
           if (!(e.metaKey || e.ctrlKey) || e.button !== 0) return false

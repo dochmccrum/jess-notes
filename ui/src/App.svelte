@@ -13,8 +13,18 @@
   import Toasts from './components/Toasts.svelte'
   import type { AppState } from './stores/app.svelte'
   import { handleKey, run } from './lib/commands'
+  import { setRenderEnv } from './editor/renderers'
+
 
   let { app, logout }: { app: AppState; logout(): void } = $props()
+
+  // Renderers (images, PDFs) reach the backend and the app through this.
+  // svelte-ignore state_referenced_locally
+  setRenderEnv({
+    backend: app.backend,
+    openImage: (ctx) => (app.viewerImage = ctx),
+    openEntry: (id, sub) => app.open(id, sub ?? null),
+  })
 
   const activeLive = $derived.by(() => {
     void app.version
@@ -24,7 +34,7 @@
   // Capture phase: app-level bindings win over the editor's own (as in Obsidian).
   function onKey(e: KeyboardEvent) {
     if (e.defaultPrevented || e.isComposing) return
-    if (app.prompt) return
+    if (app.prompt || app.viewerImage) return
     handleKey(e, {})
   }
 
@@ -137,6 +147,9 @@
   {#key app.prompt}
     <Prompt {app} />
   {/key}
+{/if}
+{#if app.viewerImage}
+  {#await import('./components/ImageViewer.svelte') then { default: ImageViewer }}<ImageViewer {app} ctx={app.viewerImage} />{/await}
 {/if}
 <Toasts {app} />
 

@@ -18,6 +18,8 @@ export interface EntryMeta {
   purged: boolean
   seq: number
   props: Record<string, unknown>
+  /** What is known about the blob (from the server's blob row or this device's ingest). */
+  blobInfo?: BlobInfo
 }
 
 export type MetaIntent =

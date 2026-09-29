@@ -2,6 +2,20 @@
 // are clients; Mermaid, Excalidraw, recipes plug in the same way later. Each renderer's code is a
 // separate lazy chunk; until it loads, a placeholder sized by `estimateSize` is shown.
 
+import type { Backend } from '../backend/types'
+import { imageBox, type ImageCtx, type PdfCtx } from './embeds'
+
+/** What renderers may use (set by the editor host). */
+export interface RenderEnv {
+  backend: Backend
+  openImage(ctx: ImageCtx): void
+  openEntry(id: string, subpath?: string | null): void
+}
+export let env: RenderEnv | null = null
+export function setRenderEnv(e: RenderEnv) {
+  env = e
+}
+
 export interface RenderCtx {
   source: string // e.g. the TeX source, or the embed target
   display: boolean
@@ -106,6 +120,41 @@ registerRenderer({
       el.className = 'jess-transclusion'
       el.textContent = `↪ ${ctx.source}${ctx.subpath ?? ''}`
       el.title = 'Transclusion is not rendered yet'
+    },
+  }),
+})
+
+registerRenderer({
+  id: 'image',
+  display: 'inline',
+  load: () => import('./image-render').then((m) => m.impl),
+  estimateSize: (c) => {
+    const b = imageBox(c as unknown as ImageCtx)
+    return b ?? { height: 120 }
+  },
+  cacheKey: (c) => JSON.stringify(c),
+})
+
+registerRenderer({
+  id: 'pdf-embed',
+  display: 'block',
+  load: () => import('./pdf-embed').then((m) => m.impl),
+  estimateSize: (c) => ({ height: (c as unknown as PdfCtx).height ?? 520 }),
+  cacheKey: (c) => JSON.stringify(c),
+})
+
+registerRenderer({
+  id: 'file-embed',
+  display: 'inline',
+  load: async () => ({
+    render(ctx, el) {
+      const c = ctx as unknown as ImageCtx
+      const a = document.createElement('span')
+      a.className = 'jess-file-embed'
+      a.textContent = `📎 ${c.source}`
+      a.setAttribute('role', 'link')
+      a.onclick = () => c.entryId && env?.openEntry(c.entryId)
+      el.append(a)
     },
   }),
 })

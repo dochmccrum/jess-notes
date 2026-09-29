@@ -7,6 +7,9 @@
   import type { DocSession } from '../backend/types'
   import { displayName } from '../lib/names'
   import { run } from '../lib/commands'
+  import { embedFor } from '../editor/embeds'
+  import { refreshLinks } from '../editor/livepreview'
+  import { addAttachments } from '../editor/attachments'
 
   let { app, id }: { app: AppState; id: string } = $props()
   let host: HTMLDivElement | undefined = $state()
@@ -39,8 +42,11 @@
           links: {
             resolve: (target, markdown) => app.entries.resolver.resolve(target, markdown ? 'markdown' : 'wiki', app.entries.folderOf(id))?.id ?? null,
             open: (target, markdown, subpath) => void app.openLink(target, markdown, subpath),
+            embedRenderer: (target, resolved, subpath, display) => embedFor(target, resolved ? (app.entries.get(resolved) ?? null) : null, subpath, display),
           },
+          onFiles: (v, files, pasted) => void addAttachments(app, v, id, files, { pasted }),
         })
+        app.editorView = view
         performance.mark('note-visible')
         performance.measure('open-note', { start: t0 })
         if (!app.pendingSubpath) view.focus()
@@ -50,9 +56,23 @@
     )
     return () => {
       cancelled = true
+      if (app.editorView === view) app.editorView = null
       view?.destroy()
       session?.dispose()
     }
+  })
+
+  // Entries changed (a pasted image's entry appeared, a target was renamed, blob facts arrived):
+  // re-resolve links and embeds, at most once per frame.
+  let refreshQueued = false
+  $effect(() => {
+    void app.version
+    if (refreshQueued) return
+    refreshQueued = true
+    requestAnimationFrame(() => {
+      refreshQueued = false
+      app.editorView?.dispatch({ effects: refreshLinks.of(null) })
+    })
   })
 
   function scrollToSubpath(view: EditorView, sub: string) {

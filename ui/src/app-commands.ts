@@ -69,6 +69,25 @@ export function registerCommands(app: AppState) {
     await app.backend.flush()
   } })
 
+  register({
+    id: 'attachment.insert',
+    title: 'Insert attachment…',
+    when: () => !!app.editorView && !!app.active,
+    run: () => {
+      const view = app.editorView
+      const note = app.active
+      if (!view || !note) return
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.multiple = true
+      input.onchange = () => {
+        const files = [...(input.files ?? [])]
+        void import('./editor/attachments').then((m) => m.addAttachments(app, view, note, files))
+      }
+      input.click()
+    },
+  })
+
   bind('Mod-n', 'note.new')
   bind('Mod-\\', 'sidebar.toggle')
   bind('Mod-o', 'switcher')
