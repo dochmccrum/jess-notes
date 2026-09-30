@@ -12,6 +12,7 @@
   import { addAttachments } from '../editor/attachments'
   import PdfPane from './PdfPane.svelte'
   import { blobUrl } from '../lib/blobs'
+  import { isTouch } from '../lib/platform'
 
   // Images opened directly (from the tree with "show all attachments", or a link).
   let imageSrc: string | undefined = $state()
@@ -112,6 +113,11 @@
         {#if i < crumbs.length - 1}<span class="sep">/</span>{/if}
       {/each}
     </nav>
+    {#if isTouch}
+      <!-- No keyboard shortcuts on a phone: the photo picker and the command palette get buttons. -->
+      {#if entry?.kind === 'markdown' && !entry.blob}<button class="icon-btn" aria-label="Insert photo" title="Insert photo" onclick={() => void run('attachment.insertPhoto')} data-testid="insert-photo">🖼</button>{/if}
+      <button class="icon-btn" aria-label="Commands" title="Commands" onclick={() => void run('palette')} data-testid="open-palette">⋯</button>
+    {/if}
     <button class="icon-btn" aria-label="Backlinks" title="Backlinks" aria-pressed={app.device.rightPanel} onclick={() => void run('panel.backlinks')}>⇆</button>
   </header>
   {#if !entry}

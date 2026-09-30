@@ -70,24 +70,25 @@ export function registerCommands(app: AppState) {
     await app.backend.flush()
   } })
 
-  register({
-    id: 'attachment.insert',
-    title: 'Insert attachment…',
-    when: () => !!app.editorView && !!app.active,
-    run: () => {
-      const view = app.editorView
-      const note = app.active
-      if (!view || !note) return
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.multiple = true
-      input.onchange = () => {
-        const files = [...(input.files ?? [])]
-        void import('./editor/attachments').then((m) => m.addAttachments(app, view, note, files))
-      }
-      input.click()
-    },
-  })
+  /** A file input: in the Android WebView it opens the system picker (the photo picker for
+   *  images/videos on Android 13+); the picked files arrive as ordinary File objects. */
+  const pickAndAttach = (accept?: string) => () => {
+    const view = app.editorView
+    const note = app.active
+    if (!view || !note) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    if (accept) input.accept = accept
+    input.onchange = () => {
+      const files = [...(input.files ?? [])]
+      void import('./editor/attachments').then((m) => m.addAttachments(app, view, note, files))
+    }
+    input.click()
+  }
+  const editing = () => !!app.editorView && !!app.active
+  register({ id: 'attachment.insert', title: 'Insert attachment…', when: editing, run: pickAndAttach() })
+  register({ id: 'attachment.insertPhoto', title: 'Insert photo or video…', when: editing, run: pickAndAttach('image/*,video/*') })
 
   bind('Mod-n', 'note.new')
   bind('Mod-\\', 'sidebar.toggle')

@@ -1,0 +1,6 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.jess_notes_app" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Also the first frame before the WebView paints: no white flash in dark mode. -->
+        <item name="android:windowBackground">@color/app_bg</item>
+    </style>
+</resources>

@@ -23,6 +23,7 @@ use jess_core::{Hash, Id};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use store::Store;
@@ -31,6 +32,8 @@ use tokio::sync::{mpsc, Notify};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CHUNK: u64 = jess_core::blobs::CHUNK_SIZE;
 /// LRU cap for "download on demand" (§7.5): 2 GB on devices.
+/// Background time after which coming back replaces the sync socket instead of probing it.
+pub const FRESH_SOCKET_AFTER_MS: u64 = 30_000;
 pub const ON_DEMAND_CAP: u64 = 2 << 30;
 
 /// Events for the UI, in the same shapes the web worker posts (`{ev: …}`).
@@ -87,6 +90,9 @@ pub(crate) struct Conf {
     pub server: Option<String>,
     pub token: Option<String>,
     pub foreground: bool,
+    /// When the app went to the background (ms), while it's there.
+    pub background_since: Option<u64>,
+    pub fresh_socket_after_ms: u64,
     pub everything: bool,
     pub fatal: Option<String>,
 }
@@ -101,6 +107,8 @@ pub(crate) struct Inner {
     pub conf: Mutex<Conf>,
     /// Wakes the transport (new token/server, online, foreground).
     pub wake_transport: Notify,
+    /// Set with a wake: replace the socket rather than probe it (see `set_foreground`).
+    pub fresh_socket: std::sync::atomic::AtomicBool,
     /// Wakes the blob pump.
     pub wake_pump: Notify,
     index_timer: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -138,6 +146,8 @@ impl Native {
             server: meta("server"),
             token: meta("token"),
             foreground: true,
+            background_since: None,
+            fresh_socket_after_ms: FRESH_SOCKET_AFTER_MS,
             everything: meta("offline").as_deref() != Some("on-demand"),
             fatal: None,
         };
@@ -159,6 +169,7 @@ impl Native {
             events,
             conf: Mutex::new(conf),
             wake_transport: Notify::new(),
+            fresh_socket: std::sync::atomic::AtomicBool::new(false),
             wake_pump: Notify::new(),
             index_timer: Mutex::new(None),
             import: Mutex::new(None),
@@ -280,6 +291,9 @@ impl Native {
             s["error"] = json!(f);
         } else if c.token.is_none() {
             s["state"] = json!("offline");
+        } else if !st.pending_doc.is_empty() && s["state"] == "synced" {
+            // Edits still being coalesced aren't in the outbox yet: not synced.
+            s["state"] = json!("syncing");
         }
         s
     }
@@ -359,11 +373,29 @@ impl Native {
         Value::Array(jess_core::json::quarantine(&st.client))
     }
 
+    /// Back from the background after a while (a phone freezes background apps, and the network
+    /// may have changed), the socket is likely dead, and probing it would take the pong timeout to
+    /// find out: connect afresh instead, so catch-up takes a connect, not seconds (DESIGN §18).
     pub fn set_foreground(&self, f: bool) {
-        self.inner.conf.lock().expect("lock").foreground = f;
-        if f {
-            self.inner.wake_transport.notify_one();
+        let mut c = self.inner.conf.lock().expect("lock");
+        c.foreground = f;
+        if !f {
+            c.background_since.get_or_insert(now_ms());
+            return;
         }
+        let since = c.background_since.take();
+        let after = c.fresh_socket_after_ms;
+        drop(c);
+        if since.is_some_and(|t| now_ms().saturating_sub(t) >= after) {
+            self.inner.fresh_socket.store(true, Ordering::SeqCst);
+        }
+        self.inner.wake_transport.notify_one();
+    }
+
+    /// Tests: shortens [`FRESH_SOCKET_AFTER_MS`].
+    #[doc(hidden)]
+    pub fn set_fresh_socket_after_ms(&self, ms: u64) {
+        self.inner.conf.lock().expect("lock").fresh_socket_after_ms = ms;
     }
 
     /// Network came back (or the app resumed): probe now.
@@ -457,9 +489,14 @@ impl Native {
         let Some(id) = Id::parse(id) else { return };
         let first = {
             let mut st = self.inner.st.lock().expect("lock");
+            let was_empty = st.pending_doc.is_empty();
             let v = st.pending_doc.entry(id).or_default();
             v.push(update);
-            v.len() == 1
+            let first = v.len() == 1;
+            if was_empty {
+                self.emit(json!({"ev": "status", "status": self.status_locked(&st)}));
+            }
+            first
         };
         if first {
             let n = self.clone();

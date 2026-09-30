@@ -4,6 +4,8 @@
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 export const isAndroid = typeof navigator !== 'undefined' && /Android/.test(navigator.userAgent)
+/** Touch-first device: the sidebar is a drawer and hover-reveal is off (DESIGN §11.5). */
+export const isTouch = typeof matchMedia !== 'undefined' && (matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches)
 
 /** The `jess-blob` scheme URL (Android/Windows WebViews use the http form). */
 export function nativeBlobUrl(hash: string, variant: string): string {

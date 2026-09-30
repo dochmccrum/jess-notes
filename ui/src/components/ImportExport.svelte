@@ -4,6 +4,7 @@
   import Modal from './Modal.svelte'
   import type { AppState } from '../stores/app.svelte'
   import type { ImportPlanView, ImportSource } from '../backend/types'
+  import { isAndroid } from '../lib/platform'
 
   let { app }: { app: AppState } = $props()
 
@@ -164,7 +165,8 @@
     }
   }
 
-  const canFolderExport = !!native || (typeof window !== 'undefined' && 'showDirectoryPicker' in window)
+  // Not on Android: its pickers can't hand over a folder (the WebView even claims showDirectoryPicker).
+  const canFolderExport = !isAndroid && (!!native || (typeof window !== 'undefined' && 'showDirectoryPicker' in window))
 </script>
 
 <Modal title="Import / export" close={() => (app.overlay = null)} wide>
@@ -173,7 +175,8 @@
     <p class="small muted">Nothing is changed until you confirm. Existing notes are never overwritten without asking.</p>
     <div class="row">
       {#if native}
-        <button class="btn" disabled={busy} onclick={() => void pickNative('folder')}>Choose folder…</button>
+        <!-- Android's pickers can't hand over a folder, only documents: zips there. -->
+        {#if !isAndroid}<button class="btn" disabled={busy} onclick={() => void pickNative('folder')}>Choose folder…</button>{/if}
         <button class="btn" disabled={busy} onclick={() => void pickNative('zip')}>Choose .zip…</button>
       {:else}
         <label class="btn">Choose folder… <input type="file" webkitdirectory multiple hidden onchange={pickFolder} disabled={busy} data-testid="import-folder" /></label>

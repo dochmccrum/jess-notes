@@ -217,6 +217,10 @@ impl<R: io::Read + io::Seek> ImportSource for ZipSource<R> {
         Ok((files, dirs))
     }
     fn open(&mut self, path: &str) -> io::Result<Box<dyn Read + '_>> {
+        // A source opened only to execute a plan made earlier hasn't been listed yet.
+        if self.index.is_empty() {
+            self.list()?;
+        }
         let i = *self
             .index
             .get(path)

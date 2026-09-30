@@ -1055,3 +1055,56 @@ each tightens a rule the simulation showed was underspecified.
     `linux-app` builds both and runs the WebDriver smoke test (`apps/tauri/e2e/smoke.mjs`) under
     Xvfb. The Android build of the same crate (the `mobile_entry_point` is in place) needs the
     Android NDK, so it is first compiled in phase 6.
+
+### Phase 6 (Android)
+
+48. **Toolchain:** NDK r28 (28.2.13676358), compile/target SDK 37, min SDK 24 (Tauri's
+    defaults), JDK 21. The generated Android project `apps/tauri/src-tauri/gen/android` is tracked
+    in git: `MainActivity.kt`, the theme and the Gradle build task are ours. The Gradle task calls
+    the Tauri CLI from `ui/node_modules` (the template assumed a `tauri` script in the app folder).
+49. **Binary IPC bodies on Android are base64.** Android's WebView can't read request bodies,
+    so Tauri's IPC there is postMessage/JSON only, and a `Uint8Array` would arrive as an array of
+    numbers (the phase 5 code rejected it, so no edit was saved on Android). The UI sends
+    `{b64}` on Android; `raw_body` accepts raw, base64 or a number array. Responses are still
+    binary (Tauri fetches them over its channel protocol).
+50. **Insets and the keyboard are handled natively.** The activity is edge-to-edge; system bars,
+    cutouts and the IME become padding on the content view, so the WebView itself shrinks when the
+    keyboard opens. That keeps the caret visible on every WebView version (older ones ignore
+    `interactive-widget=resizes-content`, and edge-to-edge windows don't resize for the IME
+    otherwise). The window background matches the app's (light/dark by the system setting), so
+    there's no white flash before the first paint.
+51. **Back gesture:** `MainActivity` asks the UI (`window.__jess.back()`), which closes the
+    innermost thing open (context menu, prompt, image viewer, dialog, drawer) or goes back to the
+    previously opened note (up to 50). When there's nothing left, the app moves to the background
+    (`moveTaskToBack`) instead of finishing, so returning is a warm resume. Opening a note on a
+    touch device closes the drawer.
+52. **Pickers on Android:** "Insert photo or video…" (a toolbar button on touch devices, next to
+    a "Commands" button for the palette, since phones have no shortcuts) is a file input with
+    `accept="image/*,video/*"`: the WebView opens the system picker (the photo picker on current
+    Android) and the files arrive as ordinary `File`s. Import and export offer zips only on
+    Android (its pickers can't hand over folders); the picked `content://` document is opened
+    from Rust through `tauri-plugin-fs` (its Rust API only; no JS permissions). A provider that
+    only gives a pipe (some cloud providers) is copied to the cache directory first, since zips
+    need seeking. Picker cancellation (a rejection on Android) is treated as "no file".
+53. **Minimum engine: Chromium 100** (the "documented minimum" of §16), tested with a desktop
+    Chromium 100 build in CI (`ui/e2e/old-chromium.mjs`; Chromium only publishes ARM builds of
+    old Android WebViews). The bundle targets ES2020 and uses newer APIs (`structuredClone`,
+    `Array.prototype.at`, `Object.hasOwn`), so an older engine (Android 10's stock WebView 74,
+    say) would show a blank page. `ui/public/compat.js`, a classic ES5 script that runs before
+    the bundle, checks those APIs and otherwise asks for an Android System WebView (or browser)
+    update. Down-levelling the bundle to reach Android 7–9 devices that never updated their
+    WebView isn't worth the size and polyfills: the Play Store updates it everywhere else.
+54. **"Synced" means the server has every keystroke.** The web worker and the native backend
+    coalesce editor updates for 30 ms before they enter the outbox, and the UI hands updates over
+    asynchronously (`postMessage`, IPC). "Synced" could show during that window (the e2e test
+    that reloads right after typing lost the tail about 1 run in 15). Now the worker counts
+    updates it has received (`docUpdates` in its status) and reports "syncing" while any are
+    uncommitted. The web backend shows "synced" only once the worker has seen every update it
+    sent. The Tauri backend counts unanswered `doc_update` calls, and the native status is
+    "syncing" while `pending_doc` isn't empty.
+55. **Android packaging:** release builds ship as an AAB (Play) and per-ABI APKs
+    (`--split-per-abi`, 22–28 MB). The universal APK is ~100 MB and isn't published. Signing
+    comes from a git-ignored `gen/android/keystore.properties` (docs/ANDROID.md). Measured on
+    an emulator: catch-up of 200 remote notes 50–100 ms, release first frame 113–219 ms, debug
+    launch → note visible 0.87–1.6 s. The <500 ms cold-start target still needs a release
+    measurement on a real phone (phase 7).

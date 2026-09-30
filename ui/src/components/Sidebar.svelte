@@ -3,10 +3,10 @@
   // moved only with transform), and an off-canvas drawer on touch devices.
   import type { Snippet } from 'svelte'
   import type { AppState } from '../stores/app.svelte'
+  import { isTouch as touch } from '../lib/platform'
 
   let { app, children }: { app: AppState; children: Snippet } = $props()
 
-  const touch = typeof matchMedia !== 'undefined' && (matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches)
   const mode = $derived(touch ? 'drawer' : app.device.sidebarMode)
   const open = $derived(app.device.sidebarOpen)
 

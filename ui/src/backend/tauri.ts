@@ -5,6 +5,7 @@ import * as Y from 'yjs'
 import { invoke, Channel } from '@tauri-apps/api/core'
 import { EntryStore } from '../stores/entries'
 import { writable } from '../lib/store'
+import { isAndroid } from '../lib/platform'
 import type { Backend, BackendEvent, DocSession, ImportPlanView, NativeIO } from './types'
 import type { BlobInfo, EntryMeta, MetaIntent, SyncStatus } from '../lib/types'
 
@@ -27,9 +28,31 @@ function unframe(buf: ArrayBuffer): Uint8Array[] {
   return out
 }
 
+/** Android's pickers reject on cancel ("File picker cancelled"); desktop ones return null. */
+function cancelled(e: unknown): null {
+  if (/cancel/i.test(String(e))) return null
+  throw e
+}
+
+/** Bytes as an IPC body. Android's IPC only carries JSON (its WebView can't read request
+ *  bodies), where a Uint8Array would become an array of numbers: base64 is several times
+ *  smaller and faster to parse. Rust's `raw_body` accepts either. */
+function rawArg(b: Uint8Array): Uint8Array | { b64: string } {
+  if (!isAndroid) return b
+  let s = ''
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000) as unknown as number[])
+  return { b64: btoa(s) }
+}
+
 export class TauriBackend implements Backend {
   readonly entries = new EntryStore()
   readonly sync = writable<SyncStatus>({ state: 'starting' })
+  /** `doc_update` calls not yet answered: until then the native status doesn't include them. */
+  private inFlight = 0
+  private nativeStatus: SyncStatus = { state: 'starting' }
+  private honest(s: SyncStatus): SyncStatus {
+    return s.state === 'synced' && this.inFlight > 0 ? { ...s, state: 'syncing' } : s
+  }
   private docs = new Map<string, Set<Y.Doc>>()
   private listeners = new Set<(e: BackendEvent) => void>()
   private ready: Promise<void> | null = null
@@ -46,7 +69,8 @@ export class TauriBackend implements Backend {
         break
       }
       case 'status':
-        this.sync.set((e as { status: SyncStatus }).status)
+        this.nativeStatus = (e as { status: SyncStatus }).status
+        this.sync.set(this.honest(this.nativeStatus))
         break
       default:
         for (const l of this.listeners) l(e as BackendEvent)
@@ -63,7 +87,8 @@ export class TauriBackend implements Backend {
         ch.onmessage = (e) => (held ? held.push(e) : this.onEvent(e))
         const r = await invoke<{ entries: EntryMeta[]; status: SyncStatus }>('init', { onEvent: ch })
         this.entries.load(r.entries)
-        this.sync.set(r.status)
+        this.nativeStatus = r.status
+        this.sync.set(this.honest(r.status))
         const replay = held
         held = null
         for (const e of replay) this.onEvent(e)
@@ -91,7 +116,13 @@ export class TauriBackend implements Backend {
       for (const u of unframe(buf)) Y.applyUpdate(ydoc, u, 'remote')
     }, 'remote')
     const onUpdate = (u: Uint8Array, origin: unknown) => {
-      if (origin !== 'remote') void invoke('doc_update', u, { headers: { 'x-id': id } })
+      if (origin === 'remote') return
+      this.inFlight++
+      this.sync.set(this.honest(this.nativeStatus))
+      void invoke('doc_update', rawArg(u), { headers: { 'x-id': id } }).finally(() => {
+        this.inFlight--
+        this.sync.set(this.honest(this.nativeStatus))
+      })
     }
     ydoc.on('update', onUpdate)
     return {
@@ -123,7 +154,7 @@ export class TauriBackend implements Backend {
   }
   async ingest(file: Blob, name?: string) {
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const r = await invoke<{ hash: string; size: number; info: BlobInfo }>('ingest', bytes, { headers: { 'x-name': encodeURIComponent(name ?? '') } })
+    const r = await invoke<{ hash: string; size: number; info: BlobInfo }>('ingest', rawArg(bytes), { headers: { 'x-name': encodeURIComponent(name ?? '') } })
     return { ...r, header: bytes.slice(0, 65536) }
   }
   blobWant(hash: string, size: number, prio: number) {
@@ -162,12 +193,12 @@ export class TauriBackend implements Backend {
     },
     pickZip: async (title) => {
       const { open } = await import('@tauri-apps/plugin-dialog')
-      const r = await open({ title, filters: [{ name: 'Zip archive', extensions: ['zip'] }] })
+      const r = await open({ title, filters: [{ name: 'Zip archive', extensions: ['zip'] }] }).catch(cancelled)
       return typeof r === 'string' ? r : null
     },
     pickSaveZip: async (defaultPath) => {
       const { save } = await import('@tauri-apps/plugin-dialog')
-      return (await save({ defaultPath, filters: [{ name: 'Zip archive', extensions: ['zip'] }] })) ?? null
+      return (await save({ defaultPath, filters: [{ name: 'Zip archive', extensions: ['zip'] }] }).catch(cancelled)) ?? null
     },
     importPlanPath: (kind, path, opts) => invoke<ImportPlanView>('import_plan', { kind, path, hidePdfs: opts.hidePdfs ?? true, conflict: opts.conflict ?? 'ask' }),
     exportTo: (path, portable, zip) => invoke('export_to', { path, portable, zip }),

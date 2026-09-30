@@ -1,5 +1,6 @@
 //! jess-native against a real server (in-process): two devices syncing notes and attachments,
-//! a vault import from disk that exports back byte-for-byte, and the `jess-blob` handler.
+//! a vault import from disk that exports back byte-for-byte, the `jess-blob` handler, and
+//! foreground catch-up over a socket that died silently in the background.
 use jess_core::import::{ImportSource, ZipSource};
 use jess_native::{io::Source, EventSink, Native};
 use serde_json::{json, Value};
@@ -110,11 +111,14 @@ async fn two_devices_sync_notes_and_attachments() {
     let id = new_id();
     a.intent(&json!([{ "op": "create", "id": id, "kind": "markdown", "parent": null, "name": "Hello.md" }]).to_string())
         .unwrap();
+    until("A synced the create", 10, || synced(&a)).await;
     let d = jess_core::doc::new_doc(7);
     a.doc_update(
         &id,
         jess_core::doc::insert(&d, 0, "Line one\r\nsee [[World]] #tag\r\n"),
     );
+    // An edit still being coalesced isn't "synced" (a reload then would lose it).
+    assert_eq!(a.status()["state"], "syncing");
     a.flush();
     until("B sees the note", 10, || by_name(&b, "Hello.md").is_some()).await;
     until("B has the text", 10, || {
@@ -191,6 +195,85 @@ async fn two_devices_sync_notes_and_attachments() {
             .unwrap_or(false)
     })
     .await;
+}
+
+/// A TCP proxy whose existing connections can be frozen: bytes stop flowing both ways but nothing
+/// is closed, like the socket of a phone app that was frozen in the background or whose network
+/// changed. New connections flow normally.
+fn frozen_proxy(target: &str) -> (String, impl Fn()) {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let target = target.trim_start_matches("http://").to_string();
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    // Connections numbered below this are frozen.
+    let frozen_below = Arc::new(AtomicU64::new(0));
+    let accepted = Arc::new(AtomicU64::new(0));
+    let fb = frozen_below.clone();
+    let acc = accepted.clone();
+    std::thread::spawn(move || {
+        for c in l.incoming() {
+            let Ok(c) = c else { continue };
+            let n = acc.fetch_add(1, Ordering::SeqCst);
+            let Ok(up) = std::net::TcpStream::connect(&target) else {
+                continue;
+            };
+            for (mut from, mut to) in [(c.try_clone().unwrap(), up.try_clone().unwrap()), (up, c)] {
+                let fb = fb.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 16384];
+                    while let Ok(k) = from.read(&mut buf) {
+                        if k == 0 {
+                            break;
+                        }
+                        while n < fb.load(Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_millis(20)); // swallowed, not closed
+                        }
+                        if to.write_all(&buf[..k]).is_err() {
+                            break;
+                        }
+                    }
+                    let _ = to.shutdown(std::net::Shutdown::Write);
+                });
+            }
+        }
+    });
+    let freeze = move || frozen_below.store(accepted.load(Ordering::SeqCst), Ordering::SeqCst);
+    (format!("http://127.0.0.1:{port}"), freeze)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn foreground_after_background_reconnects_instead_of_waiting_for_a_dead_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = start_server(&dir.path().join("server"));
+    let (via, freeze) = frozen_proxy(&url);
+    let a = device(&dir.path().join("a"), &url, "A");
+    let b = device(&dir.path().join("b"), &via, "B");
+    b.set_fresh_socket_after_ms(200);
+    until("B synced", 10, || synced(&b)).await;
+
+    // B goes to the background; its socket dies silently; A writes 200 notes meanwhile.
+    b.set_foreground(false);
+    freeze();
+    let ops: Vec<Value> = (0..200)
+        .map(|i| json!({ "op": "create", "id": new_id(), "kind": "markdown", "parent": null, "name": format!("Note {i}.md") }))
+        .collect();
+    a.intent(&Value::Array(ops).to_string()).unwrap();
+    until("A synced", 10, || synced(&a)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let before = entries(&b).len();
+    assert!(
+        before < 200,
+        "B shouldn't have received anything over the frozen socket"
+    );
+
+    // Back in the foreground: a fresh socket catches up well within the pong timeout (5 s).
+    let t = Instant::now();
+    b.set_foreground(true);
+    until("B caught up", 10, || entries(&b).len() >= before + 200).await;
+    let took = t.elapsed();
+    assert!(took < Duration::from_secs(2), "catch-up took {took:?}");
+    eprintln!("catch-up of 200 notes after a frozen socket: {took:?}");
 }
 
 /// Runs a small future to completion from a sync closure (tests only).
@@ -325,4 +408,33 @@ async fn import_from_disk_then_export_is_byte_identical() {
     // Search works over the imported notes.
     let hits = a.search("the").await;
     assert!(!hits.is_empty());
+
+    // The zip export imports back into fresh devices: by path (desktop) and as an already-open
+    // file (an Android `content://` document), with identical results.
+    for (name, open_file) in [("C", false), ("D", true)] {
+        let c = Native::open(&dir.path().join(name), Arc::new(|_| {})).unwrap();
+        let src = if open_file {
+            Source::ZipFile(Arc::new(std::fs::File::open(&zip).unwrap()))
+        } else {
+            Source::Zip(zip.clone())
+        };
+        let n = c.clone();
+        tokio::task::spawn_blocking(move || n.import_plan(src, true, "ask"))
+            .await
+            .unwrap()
+            .unwrap();
+        let n = c.clone();
+        let rep = tokio::task::spawn_blocking(move || n.import_run(&HashMap::new(), None))
+            .await
+            .unwrap()
+            .unwrap_or_else(|e| panic!("{name}: zip import failed: {e}"));
+        assert_eq!(rep["cancelled"], false);
+        let out_c = dir.path().join(format!("out-{name}"));
+        let (n, o) = (c.clone(), out_c.clone());
+        tokio::task::spawn_blocking(move || n.export_to(&o, false, false))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(folder_files(&out_c), want, "{name}");
+    }
 }

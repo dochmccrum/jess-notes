@@ -92,6 +92,11 @@ jobs:
       - run: cd ui && pnpm exec playwright install --with-deps chromium webkit
       - name: Playwright (Chromium, touch emulation, WebKit)
         run: cd ui && E2E_WEBKIT=1 pnpm e2e
+      - name: Minimum engine, Chromium 100 (DESIGN §22)
+        run: |
+          curl -fsSL -o /tmp/c.zip https://commondatastorage.googleapis.com/chromium-browser-snapshots/Linux_x64/972765/chrome-linux.zip
+          unzip -q /tmp/c.zip -d /tmp/c100
+          node ui/e2e/old-chromium.mjs /tmp/c100/chrome-linux/chrome
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -131,6 +136,60 @@ jobs:
           path: |
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
+
+  android-app:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93
+        with:
+          targets: wasm32-unknown-unknown,aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: corepack enable
+      - name: NDK and binaryen
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          sudo apt-get update && sudo apt-get install -y binaryen
+      - run: cargo install --locked wasm-bindgen-cli --version 0.2.129
+      - run: cd ui && pnpm install --frozen-lockfile && pnpm wasm && pnpm build
+      - run: cargo build -p jess-server
+      - name: Release AAB and per-ABI APKs (unsigned here; see docs/ANDROID.md for signing)
+        run: |
+          cd apps/tauri
+          ../../ui/node_modules/.bin/tauri android build --aab
+          ../../ui/node_modules/.bin/tauri android build --apk --split-per-abi
+      - name: Debug APK for the emulator
+        run: cd apps/tauri && ../../ui/node_modules/.bin/tauri android build --debug --target x86_64 --apk
+      - name: KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Smoke test on an emulator (API 33: WebView 109 as shipped)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+            node apps/tauri/e2e/android-smoke.mjs target/debug/jess
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-packages
+          path: |
+            apps/tauri/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
+            apps/tauri/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/*.aab
 
   docker:
     runs-on: ubuntu-latest

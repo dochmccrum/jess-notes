@@ -93,6 +93,10 @@ async fn run_socket(
     token: &str,
 ) -> bool {
     let (mut sink, mut stream) = ws.split();
+    // A request for a fresh socket is satisfied by this one.
+    n.inner
+        .fresh_socket
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     {
         let mut st = n.inner.st.lock().expect("lock");
@@ -130,8 +134,11 @@ async fn run_socket(
                 n.apply_locked(&mut st, o);
             }
             _ = n.inner.wake_transport.notified() => {
-                // Online / resumed / token changed: probe now (a dead socket shows within seconds).
-                if n.token().as_deref() != Some(token) {
+                // Online / resumed / token changed: probe now (a dead socket shows within seconds),
+                // or reconnect straight away after a long time in the background.
+                if n.token().as_deref() != Some(token)
+                    || n.inner.fresh_socket.swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
                     break;
                 }
                 let ping = {

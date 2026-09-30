@@ -24,6 +24,14 @@ export class WebBackend implements Backend {
     this.worker.onmessage = (m: MessageEvent<Res | WorkerEvent>) => this.onMessage(m.data)
   }
 
+  /** Doc updates posted to the worker; its status counts those it has received (`docUpdates`). A
+   *  status from before the worker saw the latest keystrokes isn't "synced" (DESIGN §22). */
+  private sentUpdates = 0
+  private workerStatus: SyncStatus = { state: 'starting' }
+  private honest(s: SyncStatus): SyncStatus {
+    return s.state === 'synced' && (s.docUpdates ?? 0) < this.sentUpdates ? { ...s, state: 'syncing' } : s
+  }
+
   private onMessage(d: Res | WorkerEvent) {
     if ('id' in d && typeof d.id === 'number' && 'ok' in d) {
       const c = this.calls.get(d.id)
@@ -42,7 +50,8 @@ export class WebBackend implements Backend {
         for (const doc of this.docs.get(e.id) ?? []) Y.applyUpdate(doc, e.update, 'remote')
         break
       case 'status':
-        this.sync.set(e.status)
+        this.workerStatus = e.status
+        this.sync.set(this.honest(e.status))
         break
       default:
         for (const l of this.listeners) l(e as BackendEvent)
@@ -61,7 +70,8 @@ export class WebBackend implements Backend {
     if (!this.ready) this.ready = this.call<InitResult>('init', this.token, this.base)
     const r = await this.ready
     this.entries.load(r.entries)
-    this.sync.set(r.status)
+    this.workerStatus = r.status
+    this.sync.set(this.honest(r.status))
   }
 
   intent(ops: MetaIntent[]) {
@@ -78,7 +88,10 @@ export class WebBackend implements Backend {
       for (const u of updates) Y.applyUpdate(ydoc, u, 'remote')
     }, 'remote')
     const onUpdate = (u: Uint8Array, origin: unknown) => {
-      if (origin !== 'remote') this.worker.postMessage({ id: 0, method: 'docUpdate', args: [id, u] })
+      if (origin === 'remote') return
+      this.sentUpdates++
+      this.worker.postMessage({ id: 0, method: 'docUpdate', args: [id, u] })
+      this.sync.set(this.honest(this.workerStatus))
     }
     ydoc.on('update', onUpdate)
     return {

@@ -13,14 +13,18 @@ use jess_core::state::MetaState;
 use jess_core::{Hash, Id};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub enum Source {
     Folder(PathBuf),
     Zip(PathBuf),
+    /// An already-open, seekable zip (an Android `content://` document). Opened again for the run
+    /// by cloning the descriptor and rewinding it.
+    ZipFile(Arc<std::fs::File>),
 }
 
 pub struct ImportState {
@@ -34,6 +38,11 @@ fn open_source(s: &Source) -> io::Result<Box<dyn ImportSource>> {
         Source::Zip(p) => Box::new(import::ZipSource::new(io::BufReader::new(
             std::fs::File::open(p)?,
         ))?),
+        Source::ZipFile(f) => {
+            let mut f = f.try_clone()?;
+            f.seek(io::SeekFrom::Start(0))?;
+            Box::new(import::ZipSource::new(io::BufReader::new(f))?)
+        }
     })
 }
 
@@ -233,7 +242,34 @@ impl Native {
 
     /// Exports the vault to a zip file or into a folder (`EXPORT-REPORT.txt` when names changed).
     pub fn export_to(&self, dest: &Path, portable: bool, zip: bool) -> Result<(), String> {
-        let p = project(
+        if zip {
+            let tmp = dest.with_extension("zip.partial");
+            let f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+            self.export_zip_into(f, portable)?;
+            std::fs::rename(&tmp, dest).map_err(|e| e.to_string())
+        } else {
+            let p = self.projection(portable);
+            let mut src = Content { n: self.clone() };
+            jess_core::export::write_folder(&p, &mut src, dest).map_err(|e| e.to_string())
+        }
+    }
+
+    /// Exports the vault as a zip into an open, empty file (an Android `content://` document the
+    /// user created; there's no rename step there).
+    pub fn export_zip_into(&self, f: std::fs::File, portable: bool) -> Result<(), String> {
+        let p = self.projection(portable);
+        let mut src = Content { n: self.clone() };
+        let n = self.clone();
+        let w = jess_core::export::write_zip(&p, &mut src, io::BufWriter::new(f), |done, total| {
+            n.emit(json!({"ev": "progress", "task": "export", "done": done, "total": total}));
+        })
+        .map_err(|e| e.to_string())?;
+        let f = w.into_inner().map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())
+    }
+
+    fn projection(&self, portable: bool) -> jess_core::projection::Projection {
+        project(
             &self.view_clone(),
             Options {
                 profile: if portable {
@@ -243,21 +279,6 @@ impl Native {
                 },
                 include_trash: false,
             },
-        );
-        let mut src = Content { n: self.clone() };
-        if zip {
-            let tmp = dest.with_extension("zip.partial");
-            let f = io::BufWriter::new(std::fs::File::create(&tmp).map_err(|e| e.to_string())?);
-            let n = self.clone();
-            let w = jess_core::export::write_zip(&p, &mut src, f, |done, total| {
-                n.emit(json!({"ev": "progress", "task": "export", "done": done, "total": total}));
-            })
-            .map_err(|e| e.to_string())?;
-            let f = w.into_inner().map_err(|e| e.to_string())?;
-            f.sync_all().map_err(|e| e.to_string())?;
-            std::fs::rename(&tmp, dest).map_err(|e| e.to_string())
-        } else {
-            jess_core::export::write_folder(&p, &mut src, dest).map_err(|e| e.to_string())
-        }
+        )
     }
 }

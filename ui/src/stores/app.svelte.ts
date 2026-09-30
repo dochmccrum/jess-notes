@@ -6,6 +6,7 @@ import { loadDevice, saveDevice, type DeviceSettings } from './device'
 import { newId } from '../lib/ids'
 import { freeName, nfc, validateName, isMarkdownName } from '../lib/names'
 import type { EntryMeta, MetaIntent } from '../lib/types'
+import { isTouch } from '../lib/platform'
 
 export type Overlay = null | 'switcher' | 'palette' | 'settings' | 'import' | 'trash' | 'move' | 'attachments'
 
@@ -80,11 +81,19 @@ export class AppState {
 
   /** Set by Root: keeps the cold-start record's last note current. */
   onActiveChange: (() => void) | null = null
+  /** Notes opened before the current one, for the Android back gesture (most recent last). */
+  private visited: string[] = []
 
-  open(id: string | null, subpath: string | null = null) {
+  open(id: string | null, subpath: string | null = null, remember = true) {
+    if (remember && this.active && id !== this.active) {
+      this.visited.push(this.active)
+      if (this.visited.length > 50) this.visited.shift()
+    }
     this.active = id
     this.pendingSubpath = subpath
     this.device.lastNote = id
+    // On a phone the drawer covers the note: opening one (tree, new note, a link) closes it.
+    if (isTouch && id) this.device.sidebarOpen = false
     this.saveDevice()
     this.onActiveChange?.()
     if (id) {
@@ -92,6 +101,42 @@ export class AppState {
       const h = `#/note/${id}`
       if (location.hash !== h) history.replaceState(null, '', h)
     }
+  }
+
+  /** The Android back gesture (DESIGN §11.5): closes the innermost open thing, else goes back to
+   *  the previous note. False when there was nothing to do (the app then goes to the background). */
+  back(): boolean {
+    const menu = document.querySelector<HTMLElement>('[role=menu]')
+    if (menu) {
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      return true
+    }
+    if (this.prompt) {
+      const p = this.prompt
+      this.prompt = null
+      p.resolve(null)
+      return true
+    }
+    if (this.viewerImage) {
+      this.viewerImage = null
+      return true
+    }
+    if (this.overlay) {
+      this.overlay = null
+      return true
+    }
+    if (isTouch && this.device.sidebarOpen) {
+      this.device.sidebarOpen = false
+      this.saveDevice()
+      return true
+    }
+    while (this.visited.length) {
+      const prev = this.visited.pop()!
+      if (prev === this.active || !this.entries.get(prev)) continue
+      this.open(prev, null, false)
+      return true
+    }
+    return false
   }
 
   siblingsTaken(parent: string | null): Set<string> {

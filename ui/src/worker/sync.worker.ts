@@ -27,6 +27,10 @@ let httpMode = false
 let foreground = true
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 let queue: Promise<unknown> = Promise.resolve()
+/** Doc updates received from the UI and not yet committed (status says "syncing" meanwhile). */
+let unsaved = 0
+/** Doc updates received from the UI, ever (reported in the status). */
+let received = 0
 const openDocs = new Map<string, number>()
 const coalesce = new Map<string, { ups: Uint8Array[]; timer: ReturnType<typeof setTimeout> }>()
 let index: SearchIndex | null = null
@@ -108,7 +112,9 @@ function status(): SyncStatus {
   const s = JSON.parse(core.statusJson()) as SyncStatus
   if (fatal) return { ...s, state: 'error', error: fatal }
   if (!token) return { ...s, state: 'offline' }
-  return s
+  // Keystrokes still being coalesced or committed aren't in the core's outbox yet: not synced.
+  if (unsaved > 0 && s.state === 'synced') return { ...s, state: 'syncing', docUpdates: received }
+  return { ...s, docUpdates: received }
 }
 
 function postStatus() {
@@ -415,11 +421,17 @@ function flushDoc(id: string) {
   clearTimeout(c.timer)
   coalesce.delete(id)
   const merged = c.ups.length === 1 ? c.ups[0] : Y.mergeUpdates(c.ups)
-  void run(() => core.localDocUpdate(id, 'body', merged, Date.now()) as Output)
+  const n = c.ups.length
+  void run(() => core.localDocUpdate(id, 'body', merged, Date.now()) as Output).finally(() => {
+    unsaved -= n
+    postStatus()
+  })
   markDirty(id)
 }
 
 function docUpdate(id: string, update: Uint8Array) {
+  received++
+  if (unsaved++ === 0) postStatus()
   const c = coalesce.get(id)
   if (c) c.ups.push(update)
   else coalesce.set(id, { ups: [update], timer: setTimeout(() => flushDoc(id), 30) })

@@ -49,6 +49,8 @@ export interface SyncStatus {
   uploads?: { pending: number; total: number }
   downloads?: number
   quarantined?: number
+  /** Web worker: doc updates received from the UI so far (see `WebBackend.honest`). */
+  docUpdates?: number
 }
 
 export interface LinkInfo {

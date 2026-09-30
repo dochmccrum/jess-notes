@@ -54,6 +54,9 @@
   }
 
   function wireLifecycle(a: AppState) {
+    // For the Android shell: MainActivity asks `back()` first on the back gesture (DESIGN §11.5).
+    // `entryCount()` is for the device smoke test (catch-up timing).
+    ;(window as unknown as { __jess?: object }).__jess = { back: () => a.back(), entryCount: () => a.entries.entries.size }
     const saveBoot = () => {
       const snapshot = [...a.entries.entries.values()]
       void writeBoot({ lastNote: a.active, entries: snapshot, doc: null, at: Date.now() })

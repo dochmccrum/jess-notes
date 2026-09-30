@@ -39,10 +39,23 @@ fn frame(parts: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
+/// A binary IPC body. Android's IPC is JSON-only: there the UI sends `{b64}` (see `rawArg` in
+/// `ui/src/backend/tauri.ts`); a plain Uint8Array would arrive as an array of numbers.
 fn raw_body(req: &Request<'_>) -> Result<Vec<u8>, String> {
+    use base64::Engine;
     match req.body() {
         InvokeBody::Raw(b) => Ok(b.clone()),
-        InvokeBody::Json(_) => Err("expected a raw body".into()),
+        InvokeBody::Json(Value::Object(o)) if o.get("b64").is_some_and(Value::is_string) => {
+            base64::engine::general_purpose::STANDARD
+                .decode(o["b64"].as_str().unwrap_or_default())
+                .map_err(|e| format!("bad base64 body: {e}"))
+        }
+        InvokeBody::Json(Value::Array(a)) => a
+            .iter()
+            .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .ok_or_else(|| "expected a byte array".into()),
+        InvokeBody::Json(_) => Err("expected a binary body".into()),
     }
 }
 
@@ -253,9 +266,13 @@ async fn import_plan(
     hide_pdfs: bool,
     conflict: String,
     app: State<'_, App>,
+    handle: tauri::AppHandle,
 ) -> Result<Value, String> {
     let n = app.native.clone();
     let src = match kind.as_str() {
+        "zip" if is_content_uri(&path) => {
+            Source::ZipFile(Arc::new(open_document(&handle, &path, false)?))
+        }
         "zip" => Source::Zip(path.into()),
         _ => Source::Folder(path.into()),
     };
@@ -283,9 +300,63 @@ async fn export_to(
     portable: bool,
     zip: bool,
     app: State<'_, App>,
+    handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let n = app.native.clone();
+    if zip && is_content_uri(&path) {
+        let f = open_document(&handle, &path, true)?;
+        return blocking(move || n.export_zip_into(f, portable)).await;
+    }
     blocking(move || n.export_to(Path::new(&path), portable, zip)).await
+}
+
+/// Android's pickers return `content://` document URIs, not paths.
+fn is_content_uri(path: &str) -> bool {
+    path.starts_with("content://")
+}
+
+/// Opens a picked document through the fs plugin (a `content://` URI becomes a descriptor from the
+/// content resolver). Zips are read with seeks: a provider that only hands out a pipe (some cloud
+/// providers) is copied to the cache directory first.
+fn open_document(
+    handle: &tauri::AppHandle,
+    uri: &str,
+    write: bool,
+) -> Result<std::fs::File, String> {
+    use std::io::Seek;
+    use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+    let url = uri.parse().map_err(|e| format!("{uri}: {e}"))?;
+    let mut opts = OpenOptions::new();
+    if write {
+        opts.write(true).truncate(true).create(true);
+    } else {
+        opts.read(true);
+    }
+    let mut f = handle
+        .fs()
+        .open(FilePath::Url(url), opts)
+        .map_err(|e| format!("couldn't open the document: {e}"))?;
+    if write || f.stream_position().is_ok() && f.seek(std::io::SeekFrom::End(0)).is_ok() {
+        if !write {
+            f.rewind().map_err(|e| e.to_string())?;
+        }
+        return Ok(f);
+    }
+    let dir = handle.path().app_cache_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join("import.zip");
+    let mut out = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    std::io::copy(&mut f, &mut out).map_err(|e| e.to_string())?;
+    out.rewind().map_err(|e| e.to_string())?;
+    // The open descriptor keeps the data; nothing is left behind in the cache.
+    let _ = std::fs::remove_file(&tmp);
+    Ok(out)
 }
 
 // ------------------------------------------------------------------ app
@@ -311,6 +382,7 @@ fn open_native(root: &Path, events: Events) -> Result<Native, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&root)?;
