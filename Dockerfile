@@ -17,6 +17,10 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY core core
 COPY server server
+# The other workspace members only need to exist for Cargo to load the workspace; they aren't built.
+COPY apps/native apps/native
+COPY apps/tauri/src-tauri/Cargo.toml apps/tauri/src-tauri/Cargo.toml
+COPY apps/tauri/src-tauri/src apps/tauri/src-tauri/src
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release -p jess-server \

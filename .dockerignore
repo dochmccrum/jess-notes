@@ -8,3 +8,4 @@ ui/playwright-report
 *.db
 *.db-shm
 *.db-wal
+apps/tauri/src-tauri/gen
