@@ -885,7 +885,8 @@ each tightens a rule the simulation showed was underspecified.
    doc can hold *pending* structs (a reordered update waiting for its dependency); a state vector
    overstates coverage in that case and `encode_state` drops pending structs, both of which lost text
    in the simulation. A recovered note's new first row is `merge(purged_state, update)`. A doc update
-   fully covered by the purged state is acknowledged `Duplicate(0)` and carries nothing to keep.
+   fully covered by the purged state is acknowledged `Duplicate(0)` and doesn't recover the note, but
+   its deletions are merged into the purged state (item 56).
    (Privacy note: purged text therefore remains in `jess.db` as a tombstone payload.)
 3. **Purged docs are cleaned up immediately inside the transaction** (not at commit time), so a
    later op in the same push can recover them; groups use a SQL `SAVEPOINT` so a rejected group
@@ -1108,3 +1109,43 @@ each tightens a rule the simulation showed was underspecified.
     an emulator: catch-up of 200 remote notes 50–100 ms, release first frame 113–219 ms, debug
     launch → note visible 0.87–1.6 s. The <500 ms cold-start target still needs a release
     measurement on a real phone (phase 7).
+56. **Deletions sent to a purged note join its purged state.** An offline device can delete text in
+    a note that was purged meanwhile. That update adds no content, so it doesn't recover the note,
+    and it used to be dropped. If another device's edit then recovered the note, the server's
+    `merge(purged_state, update)` lacked the deletion while the first device had applied it, and
+    the two replicas' text diverged for good (found by the nightly simulation, seed 34393, now a
+    pinned regression seed). A covered update is now merged into `doc_purged.state`. It still
+    can't resurrect anything, because it carries no inserted content.
+57. **A blob referenced by the replica's own unsent op isn't evictable.** Sequence found by the
+    nightly simulation (seed 110067): a device adds a file whose bytes the server
+    already has, so it's confirmed at once. The entry referencing it is still in the offline
+    outbox. The device evicts the bytes (allowed, since they're confirmed). Nothing on the server
+    references them, so GC deletes them after the retention period. The device reconnects and
+    pushes the reference to bytes that no longer exist anywhere. Now the client keeps
+    `BlobManager::held`, the blobs named by its pending or quarantined `Create`/`SetBlob` ops, and
+    they can't be evicted. A pending op is dropped only once the cursor passes its seq, so by then
+    the client has seen any "absent" blob row the server wrote before applying it, and that row
+    puts the local copy back in the upload queue (D4 unchanged: never evict before the server has
+    the bytes *and* knows they're referenced).
+    The simulation's eviction check now tests D4's actual property: a referenced blob is on the
+    server, or another replica holds its bytes local-only or uploading (never evicted). A copy
+    confirmed before the server GC'd the then-unreferenced bytes may go once another device has
+    re-added them (seeds 183854, 193393, 212421 were false alarms of the older, stricter check).
+58. **A device's own Restore can take a recovered note out of trash.** An offline device edits a
+    note, restores it from trash, then reconnects after another device purged it. The edit
+    recovers the note into trash (D3), and the same push's `Restore` then applies like any other
+    op, so the note comes back live under its own name. That is what the user asked for on that
+    device. The simulation's no-resurrection check already allowed a same-push rename. It now
+    also allows an applied explicit `Restore` of that entry (seed 376378).
+59. **PDF find needs `for await` over a `ReadableStream`.** PDF.js's `getTextContent` iterates a
+    stream that way. Safari and Chromium before 124 (older Android WebViews; our minimum is 100)
+    don't support it, so find in a PDF threw and showed nothing there. The PDF chunk installs a
+    small polyfill (`ui/src/pdf/stream-iter.ts`). PDF.js's worker also iterates a
+    `DecompressionStream`, but falls back when that throws. Found by the WebKit e2e run, which
+    until now only ran in CI and had never passed there. The e2e suite now gives WebKit its own
+    server and vault (the tests assume one browser per vault), and it can run locally in
+    Playwright's Ubuntu image, since Playwright's WebKit build doesn't run on Fedora.
+60. **At most 2 live embedded PDFs, really.** Evicting the oldest live embed destroyed its viewer
+    but left its element in place and never cleared the embed's handle, so it couldn't go live
+    again when scrolled back to. Eviction now puts the thumbnail back and lets the embed go live
+    again next time it comes into view.

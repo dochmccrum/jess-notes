@@ -38,7 +38,7 @@ test('quick switcher and command palette', async ({ page }) => {
   await page.getByTestId('new-note').click()
   await page.keyboard.press(`${MOD}+o`)
   await expect(page.getByRole('dialog')).toBeVisible()
-  await page.keyboard.type(name.slice(0, 8))
+  await page.keyboard.type(name.slice(0, -2))
   await page.keyboard.press('Enter')
   await expect(page.locator('.cm-content')).toContainText('zzz')
   await page.keyboard.press(`${MOD}+p`)
@@ -54,8 +54,10 @@ test('wikilink autocomplete, follow, backlinks', async ({ page }) => {
   await newNote(page, target)
   await page.keyboard.type('I am the target')
   await newNote(page, `Source ${Date.now()}`)
-  await page.keyboard.type(`See [[${target.slice(0, 10)}`)
+  // A partial name that only this run's note matches (the vault may hold earlier runs' notes).
+  await page.keyboard.type(`See [[${target.slice(0, -2)}`)
   await expect(page.locator('.cm-tooltip-autocomplete li').first()).toContainText(target)
+  await page.waitForTimeout(100) // CodeMirror ignores Enter for 75 ms after the list changes
   await page.keyboard.press('Enter')
   await expect(page.locator('.cm-content')).toContainText(`[[${target}]]`)
   await page.keyboard.press(`${MOD}+Shift+b`)

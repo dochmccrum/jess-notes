@@ -142,6 +142,11 @@ jobs:
     env:
       NDK_VERSION: 28.2.13676358
     steps:
+      - name: Free disk space (four release ABIs + a debug build overflow the runner's disk)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/android/sdk/ndk
+          sudo docker image prune --all --force > /dev/null
+          df -h /
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93
         with:
@@ -168,6 +173,8 @@ jobs:
           cd apps/tauri
           ../../ui/node_modules/.bin/tauri android build --aab
           ../../ui/node_modules/.bin/tauri android build --apk --split-per-abi
+          rm -rf ../../target/*-linux-android*/release  # packaged already; frees space for the debug build
+          df -h /
       - name: Debug APK for the emulator
         run: cd apps/tauri && ../../ui/node_modules/.bin/tauri android build --debug --target x86_64 --apk
       - name: KVM for the emulator

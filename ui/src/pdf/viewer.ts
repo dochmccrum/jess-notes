@@ -2,6 +2,7 @@
 // PDFDataRangeTransport backed by the blob channel (local chunks first, then authenticated range
 // fetches), so a 100 MB PDF opens without being loaded whole. Pages are virtualised: placeholders
 // everywhere, canvases + text layers only near the viewport, and at most `maxLive` of them.
+import './stream-iter'
 import { getDocument, GlobalWorkerOptions, PDFDataRangeTransport, TextLayer, type PDFDocumentProxy, type PDFPageProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import type { Backend } from '../backend/types'

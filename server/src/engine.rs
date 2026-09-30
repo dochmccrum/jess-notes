@@ -610,9 +610,21 @@ impl Engine {
                 )
                 .optional()
                 .map_err(|_| Reject::BadUpdate)?;
-            let (_sv, state) = purged.unwrap_or_default();
+            let (sv, state) = purged.unwrap_or_default();
             if !ydoc::has_new_content(update, &state).map_err(|_| Reject::BadUpdate)? {
-                // Fully covered by the purged state: nothing to keep (acked as Duplicate(0)).
+                // No new content: the note stays purged (acked as Duplicate(0)). Its deletions
+                // still join the purged state: if another device recovers the note later, the
+                // sender (which applied them locally) and the server must agree on the text.
+                let merged = ydoc::merge(&[state.clone(), update.to_vec()])
+                    .map_err(|_| Reject::BadUpdate)?;
+                if merged != state {
+                    self.conn
+                        .execute(
+                            "INSERT OR REPLACE INTO doc_purged(entry_id, slot, state_vector, state) VALUES (?1, ?2, ?3, ?4)",
+                            params![entry.0.to_vec(), slot, sv, merged],
+                        )
+                        .map_err(|_| Reject::BadUpdate)?;
+                }
                 return Ok(Some(0));
             }
             let sctx = self.server_ctx(now);

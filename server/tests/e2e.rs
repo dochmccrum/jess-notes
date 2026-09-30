@@ -217,6 +217,13 @@ async fn blobs_upload_resume_download_range() {
             a.commit(w);
         }
     }
+    // Evictable once confirmed and the op referencing it is applied (DESIGN §22 item 57).
+    assert!(
+        a.c.pending_count() == 0 || !a.c.blobs.can_evict(&h),
+        "held while its Create is pending"
+    );
+    a.until(Duration::from_secs(5), |c| c.pending_count() == 0)
+        .await;
     assert!(a.c.blobs.can_evict(&h), "confirmed after upload");
     // Range download.
     let mut r = ureq::get(&srv.url(&format!("/api/blobs/{h}")))

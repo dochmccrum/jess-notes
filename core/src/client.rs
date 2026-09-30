@@ -240,7 +240,26 @@ impl Client {
         c.confirmed = MetaState::from_entries(entries);
         c.rebuild_redirects();
         c.rebuild_view();
+        c.refresh_held();
         (c, w)
+    }
+
+    /// Blobs referenced by pending or quarantined local ops can't be evicted (see `BlobManager::held`).
+    /// A pending op is dropped only once the cursor has passed its seq, so by then any "absent"
+    /// blob row the server wrote before applying it has been seen (and the copy re-queued).
+    fn refresh_held(&mut self) {
+        let blob_of = |op: &Op| match &op.body {
+            OpBody::Meta(MetaOp::Create { blob, .. }) => *blob,
+            OpBody::Meta(MetaOp::SetBlob { blob, .. }) => Some(*blob),
+            _ => None,
+        };
+        self.blobs.held = self
+            .pending
+            .values()
+            .map(|p| &p.op)
+            .chain(self.quarantine.values().map(|q| &q.op))
+            .filter_map(blob_of)
+            .collect();
     }
 
     // ---------------------------------------------------------------- accessors
@@ -391,6 +410,7 @@ impl Client {
 
     fn drop_pending(&mut self, op_id: u64, out: &mut Output) {
         self.pending.remove(&op_id);
+        self.refresh_held();
         self.in_flight.remove(&op_id);
         out.writes.push(Write::Del(kv::pending_key(op_id)));
         let keys: Vec<(u64, Id)> = self
@@ -608,7 +628,7 @@ impl Client {
                         minicbor::to_vec(&q).expect("encode"),
                     ));
                     self.quarantine.insert(op_id, q);
-                    self.drop_pending(op_id, &mut out);
+                    self.drop_pending(op_id, &mut out); // refreshes `held`
                     out.events.push(Event::Rejected { op_id, reason });
                     rebuild = true;
                 }
@@ -815,6 +835,7 @@ impl Client {
             ));
             self.pending.insert(op.op_id, p);
         }
+        self.refresh_held();
         // Redirects overlay for renamed/moved entries (and everything under moved folders).
         let last_op = first + built.len() as u64 - 1;
         let mut added = false;

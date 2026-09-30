@@ -12,6 +12,7 @@ async function pastePng(page: Page, w: number, h: number) {
       g.fillStyle = '#c0392b'
       g.fillRect(0, 0, w, h)
       const blob: Blob = await new Promise((r) => c.toBlob((b) => r(b!), 'image/png'))
+      c.width = 0 // keeps the canvas alive until toBlob is done (else V8 may collect it and the promise)
       const dt = new DataTransfer()
       dt.items.add(new File([blob], 'image.png', { type: 'image/png' }))
       el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
@@ -20,7 +21,7 @@ async function pastePng(page: Page, w: number, h: number) {
   )
 }
 
-test('paste an image: Obsidian name, inline at its size, not in the tree, on the other device', async ({ browser }) => {
+test('paste an image: Obsidian name, inline at its size, not in the tree, on the other device', async ({ browser, browserName }) => {
   const a = await (await browser.newContext()).newPage()
   const b = await (await browser.newContext()).newPage()
   await login(a)
@@ -62,6 +63,9 @@ test('paste an image: Obsidian name, inline at its size, not in the tree, on the
   const aimg = a.locator('.cm-content .jess-img img')
   await expect(aimg).toBeVisible({ timeout: 10_000 })
   expect(await aimg.getAttribute('src')).toMatch(/^\/_blob\/[0-9a-f]{64}\/display/)
+  // Playwright's WebKit can't navigate while emulating offline (the reload fails with "internal
+  // error" before the service worker sees it), so the offline reload is checked in Chromium only.
+  if (browserName === 'webkit') return
   await a.context().setOffline(true)
   await a.reload()
   await expect.poll(() => a.locator('.cm-content .jess-img img').evaluate((i: HTMLImageElement) => i.naturalWidth), { timeout: 10_000 }).toBe(320)

@@ -6,7 +6,7 @@
 //! `SIM_SEEDS=n` (default 200) seeds from `SIM_START` (default 0); `SIM_SEED=k` runs one seed
 //! with a full trace.
 
-use jess_core::blobs::{Bitmap, BlobResult, BlobTask};
+use jess_core::blobs::{Bitmap, BlobResult, BlobTask, LocalState};
 use jess_core::client::{Client, Output};
 use jess_core::doc as ydoc;
 use jess_core::kv;
@@ -445,7 +445,22 @@ impl Sim {
                                 }
                             }
                         }
-                        self.check_resurrection(&purged_before);
+                        // Explicit restores applied in this push (the device restored the note
+                        // from its trash while offline, before it learned of the purge).
+                        let applied: HashSet<u64> = acks
+                            .iter()
+                            .filter(|(_, r)| matches!(r, AckResult::Applied(_)))
+                            .map(|(id, _)| *id)
+                            .collect();
+                        let restored: HashSet<Id> = ops
+                            .iter()
+                            .filter(|o| applied.contains(&o.op_id))
+                            .filter_map(|o| match &o.body {
+                                OpBody::Meta(MetaOp::Restore { target }) => Some(*target),
+                                _ => None,
+                            })
+                            .collect();
+                        self.check_resurrection(&purged_before, &restored);
                         if let Some(pre) = pre {
                             self.invariant_r_post(pre);
                         }
@@ -588,14 +603,17 @@ impl Sim {
         }
     }
 
-    fn check_resurrection(&mut self, purged_before: &HashSet<Id>) {
+    fn check_resurrection(&mut self, purged_before: &HashSet<Id>, restored: &HashSet<Id>) {
         let e = self.engine.as_ref().unwrap();
         for id in purged_before {
             let x = e.state.get(id).unwrap();
             if !x.purged {
-                // Recovered into trash; a later op in the same push may rename it (LWW).
+                // Recovered into trash; a later op in the same push may rename it (LWW) or, when
+                // it's the sender's own explicit Restore, take it out of trash (DESIGN §22 item 58).
                 assert!(
-                    x.trashed.is_some() || x.name.starts_with(RECOVERED_PREFIX),
+                    x.trashed.is_some()
+                        || x.name.starts_with(RECOVERED_PREFIX)
+                        || restored.contains(id),
                     "seed {}: resurrection of {id:?} {x:?}",
                     self.seed
                 );
@@ -1139,9 +1157,29 @@ impl Sim {
                 .state
                 .iter()
                 .any(|e| !e.purged && e.blob == Some(h));
+            let holders: Vec<String> = (0..self.clients.len())
+                .filter(|&o| o != ci)
+                .map(|o| {
+                    format!(
+                        "c{o}:{:?}:{}",
+                        self.clients[o].c.blobs.local.get(&h).map(|b| b.state),
+                        self.clients[o].blob_bytes.contains_key(&h)
+                    )
+                })
+                .collect();
+            // D4's safety property: a referenced blob's bytes survive somewhere — on the server, or
+            // on a replica that must upload them (local-only / uploading copies are never evicted).
+            // A copy confirmed before the server GC'd the then-unreferenced bytes may go.
+            let kept_elsewhere = (0..self.clients.len()).filter(|&o| o != ci).any(|o| {
+                self.clients[o].blob_bytes.contains_key(&h)
+                    && matches!(
+                        self.clients[o].c.blobs.local.get(&h).map(|b| b.state),
+                        Some(LocalState::LocalOnly | LocalState::Uploading)
+                    )
+            });
             assert!(
-                present || !referenced,
-                "seed {}: evicted {h:?} before the server had it",
+                present || !referenced || kept_elsewhere,
+                "seed {}: c{ci} evicted {h:?} before the server had it; others {holders:?}",
                 self.seed
             );
             apply_writes(&mut self.clients[ci].kv, w);
@@ -1201,7 +1239,7 @@ impl Sim {
                 if n > 0 {
                     self.log(format!("server purged {n} expired"));
                 }
-                self.check_resurrection(&purged_before);
+                self.check_resurrection(&purged_before, &HashSet::new());
                 self.pump_all();
             }
             3 if self.rng.chance(self.faults.server_crash * 3.0) => self.server_crash(),
@@ -1560,6 +1598,17 @@ fn run_seed(seed: u64, verbose: bool) {
     sim.run(steps);
 }
 
+/// Seeds past the default range that once failed; always run first.
+/// 34393: a delete-only edit to a purged note was dropped, then another device recovered the note
+/// and the replicas' text diverged (DESIGN §22 item 56).
+/// 110067: a confirmed blob was evicted while the replica's own op referencing it was still unsent,
+/// and the server GC'd the unreferenced bytes meanwhile (item 57).
+/// 183854, 193393, 212421: a copy confirmed before the GC was evicted while another replica held
+/// the re-referenced bytes local-only (safe; the check was too strict).
+/// 376378: an offline Restore of a note purged meanwhile, pushed after the edit that recovered it
+/// (item 58; the check was too narrow).
+const REGRESSION_SEEDS: &[u64] = &[34393, 110067, 183854, 193393, 212421, 376378];
+
 #[test]
 fn simulation() {
     if let Ok(s) = std::env::var("SIM_SEED") {
@@ -1575,7 +1624,7 @@ fn simulation() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let t = std::time::Instant::now();
-    for seed in start..start + n {
+    for seed in REGRESSION_SEEDS.iter().copied().chain(start..start + n) {
         let r = std::panic::catch_unwind(|| run_seed(seed, false));
         if r.is_err() {
             panic!("simulation failed at seed {seed}; rerun with SIM_SEED={seed}");

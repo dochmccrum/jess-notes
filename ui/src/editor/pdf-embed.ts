@@ -8,17 +8,20 @@ import { blobUrl } from '../lib/blobs'
 import type { PdfViewer } from '../pdf/viewer'
 
 const MAX_LIVE = 2
-const live: { el: HTMLElement; stop(): void }[] = []
+const live: { stop(): void; evicted(): void }[] = []
 
-function makeLive(el: HTMLElement, box: HTMLElement, ctx: PdfCtx): () => void {
+/** Makes the embed live; `evicted` runs when it's torn down to make room for a newer one. */
+function makeLive(box: HTMLElement, ctx: PdfCtx, evicted: () => void): () => void {
   let viewer: PdfViewer | null = null
   let dead = false
+  let before: Node[] = [] // what the box showed (the thumbnail), put back when torn down
   const host = document.createElement('div')
   host.className = 'jess-pdf-embed-scroll'
   void import('../pdf/viewer').then(async ({ openPdf, PdfViewer }) => {
     try {
       const doc = await openPdf({ backend: env!.backend, hash: ctx.hash!, size: ctx.info?.size ?? 0 })
       if (dead) return void doc.destroy()
+      before = [...box.childNodes]
       box.replaceChildren(host)
       viewer = new PdfViewer(host, doc, { page: ctx.page, zoom: 'fit', compact: true })
       await viewer.init()
@@ -27,15 +30,20 @@ function makeLive(el: HTMLElement, box: HTMLElement, ctx: PdfCtx): () => void {
     }
   })
   const entry = {
-    el,
     stop: () => {
       dead = true
       viewer?.destroy()
       viewer = null
+      if (host.isConnected) box.replaceChildren(...before)
     },
+    evicted,
   }
   live.push(entry)
-  while (live.length > MAX_LIVE) live.shift()!.stop()
+  while (live.length > MAX_LIVE) {
+    const e = live.shift()!
+    e.stop()
+    e.evicted()
+  }
   return () => {
     const i = live.indexOf(entry)
     if (i >= 0) live.splice(i, 1)
@@ -83,7 +91,7 @@ export const impl: RendererImpl = {
     }
     let stop: (() => void) | null = null
     const near = new IntersectionObserver((es) => {
-      if (es.some((e) => e.isIntersecting) && !stop) stop = makeLive(el, box, ctx)
+      if (es.some((e) => e.isIntersecting) && !stop) stop = makeLive(box, ctx, () => (stop = null))
     }, { rootMargin: '100% 0px' })
     const far = new IntersectionObserver((es) => {
       if (es.every((e) => !e.isIntersecting) && stop) {

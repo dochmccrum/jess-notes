@@ -5,7 +5,7 @@
 use crate::ids::Hash;
 use crate::kv::{self, Write};
 use minicbor::{Decode, Encode};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub const CHUNK_SIZE: u64 = 4 << 20;
 pub const MAX_UPLOADS: usize = 2;
@@ -187,6 +187,11 @@ pub struct BlobManager {
     parked: BTreeSet<Hash>,
     presence_in_flight: bool,
     uploads_done_session: usize,
+    /// Blobs referenced by this replica's own ops that the server hasn't applied and delivered back
+    /// yet (pending or quarantined). Not evictable, even if confirmed: until the reference is on
+    /// the server, nothing there may reference the bytes and GC can delete them (DESIGN §22 item 57).
+    /// Set by the client; not persisted (recomputed on load).
+    pub held: HashSet<Hash>,
 }
 
 impl BlobManager {
@@ -630,11 +635,11 @@ impl BlobManager {
         w
     }
 
-    /// The eviction rule: only confirmed, unpinned blobs may be evicted.
+    /// The eviction rule: only confirmed, unpinned blobs not held by pending ops may be evicted.
     pub fn can_evict(&self, hash: &Hash) -> bool {
         self.local
             .get(hash)
-            .map(|b| b.state == LocalState::Confirmed && !b.pinned)
+            .map(|b| b.state == LocalState::Confirmed && !b.pinned && !self.held.contains(hash))
             .unwrap_or(false)
     }
 
