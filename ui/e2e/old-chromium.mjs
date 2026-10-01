@@ -15,10 +15,22 @@ const port = 18000 + Math.floor(Math.random() * 1000)
 const cdp = port + 1000
 const kids = []
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+/** Polls `url` until it answers (a fixed sleep was too short for the debug server on CI). */
+async function up(url, ms = 30000) {
+  for (const end = Date.now() + ms; ; await sleep(200)) {
+    try {
+      if ((await fetch(url)).ok) return
+    } catch {
+      /* not listening yet */
+    }
+    if (Date.now() > end) throw new Error(`${url} didn't come up within ${ms / 1000} s`)
+  }
+}
 try {
   kids.push(spawn(join(root, 'target/debug/jess'), ['serve'], { env: { ...process.env, JESS_DATA_DIR: join(tmp, 's'), PORT: String(port), JESS_ADMIN_PASSWORD: 'correct horse battery', JESS_UI_DIR: join(root, 'ui/dist'), RUST_LOG: 'warn' }, stdio: 'inherit' }))
   kids.push(spawn(exe, ['--headless', '--no-sandbox', `--remote-debugging-port=${cdp}`, `--user-data-dir=${join(tmp, 'p')}`, 'about:blank'], { stdio: 'ignore' }))
-  await sleep(2500)
+  await up(`http://127.0.0.1:${port}/healthz`)
+  await up(`http://127.0.0.1:${cdp}/json/version`)
   const b = await chromium.connectOverCDP(`http://127.0.0.1:${cdp}`)
   const page = b.contexts()[0].pages()[0]
   const errs = []
