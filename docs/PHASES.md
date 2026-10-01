@@ -51,7 +51,7 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 - [x] Commands + keybinding registries, command palette, quick switcher (§11.4, §11.6).
 - [x] Editor: CodeMirror 6 + y-codemirror, live preview, Lezer extensions, renderer registry, maths via lazy KaTeX, wikilinks + autocomplete, transclusion placeholder, text fidelity (D11) (§10).
 - [x] Backlinks, tags panel, basic search (sqlite-wasm FTS5, lazy), sync status indicator.
-- [x] Setup/login/pairing screens; import/export UI with dry run + report.
+- [x] Setup/login/pairing screens; named Spaces can be created locally or connected to a remote URL; import/export UI with dry run + report.
 - [x] Vitest (parsers against shared fixtures, storage/sync layer), component tests (sidebar modes & timing, tree keyboard, switcher), Playwright for the flows in SPEC "Testing". *Chromium + touch emulation run locally; WebKit is configured for CI (`E2E_WEBKIT=1`) but could not be run in this environment.*
 - [x] Bundle budget check in CI (`bench/budgets.json`).
 - [x] Dockerfile (multi-stage, git, openssh-client, tini, non-root), docker-compose.yml, `DEPLOY.md` (Coolify steps, sizing, proxy limits, migrating a vault, git remote). *pdfium moves to phase 4 with the derivation subprocess that uses it (DESIGN §22.27).*

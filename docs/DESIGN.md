@@ -92,6 +92,13 @@ docs/                 DESIGN.md, DEPLOY.md, PROTOCOL.md (generated from core typ
 
 Package manager: pnpm through corepack (it isn't installed on this machine yet, but corepack comes with Node 22). Rust uses a single cargo workspace.
 
+### Spaces
+
+The client presents each note store as a named **Space**. A Space may be local-only (no
+authentication or network transport) or connected to a server URL. Web storage is namespaced by
+Space so local and remote stores cannot share tokens, metadata, or cached documents. Native apps
+retain their existing SQLite store and select local-only mode by clearing the configured server.
+
 ---
 
 ## 3. Data model

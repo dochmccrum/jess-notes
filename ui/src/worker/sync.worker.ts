@@ -20,6 +20,7 @@ let db: IDBDatabase
 let core: Core
 let token: string | null = null
 let base = ''
+let dbName = 'jess-space-local'
 let ws: WebSocket | null = null
 let attempt = 0
 let wsFailures = 0
@@ -623,10 +624,11 @@ async function attachmentRefs(): Promise<Record<string, number>> {
     const k = `${l.src}\u0000${l.syntax}\u0000${l.target}`
     let r = cache.get(k)
     if (r === undefined) {
-      r = core.resolve(l.target, l.syntax === 'markdown', l.src) ?? null
-      cache.set(k, r)
+      const resolved = core.resolve(l.target, l.syntax === 'markdown', l.src) ?? null
+      r = resolved
+      cache.set(k, resolved)
     }
-    if (r && r in refs) refs[r]++
+    if (r != null && r in refs) refs[r]++
   }
   return refs
 }
@@ -883,11 +885,12 @@ async function readSize(hash: string): Promise<number | null> {
 // ---------------------------------------------------------------- RPC
 
 const methods: Record<string, (...a: never[]) => unknown> = {
-  async init(t: string | null, b: string, replicaHint?: string) {
+  async init(t: string | null, b: string, replicaHint?: string, name?: string) {
     token = t
     base = b
+    dbName = name || dbName
     await init()
-    db = await openDb()
+    db = await openDb(dbName)
     const [keys, vals] = await loadAll(db)
     core = new Core(keys, vals, replicaHint ?? randomHex(7), CHUNK)
     await commit(db, core.take_init_writes() as Write[])

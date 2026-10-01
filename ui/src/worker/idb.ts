@@ -2,7 +2,7 @@
 // compared bytewise); `blobchunks` holds local blob bytes in 4 MiB records; `meta` holds device
 // settings, the token and the cold-start boot record (read by the main thread directly).
 
-export const DB_NAME = 'jess'
+export const DB_NAME = 'jess-space-local'
 const VERSION = 1
 
 export function openDb(name = DB_NAME): Promise<IDBDatabase> {

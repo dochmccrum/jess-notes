@@ -100,6 +100,18 @@ fn set_token(token: Option<String>, app: State<'_, App>) {
 }
 
 #[tauri::command]
+fn get_space(app: State<'_, App>) -> Option<Value> {
+    app.native
+        .meta_get("ui:space")
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
+#[tauri::command]
+fn set_space(space: Value, app: State<'_, App>) {
+    app.native.meta_put("ui:space", serde_json::to_string(&space).ok().as_deref())
+}
+
+#[tauri::command]
 fn meta_get(key: String, app: State<'_, App>) -> Option<String> {
     app.native.meta_get(&format!("ui:{key}"))
 }
@@ -424,6 +436,8 @@ pub fn run() {
             init,
             get_server,
             set_server,
+            get_space,
+            set_space,
             get_token,
             set_token,
             meta_get,

@@ -5,6 +5,8 @@ import { writable } from '../lib/store'
 import type { Backend, BackendEvent, DocSession } from './types'
 import type { BlobInfo, MetaIntent, SyncStatus } from '../lib/types'
 import type { InitResult, Res, WorkerEvent } from '../worker/protocol'
+import type { Space } from '../lib/spaces'
+import { spaceDbName } from '../lib/spaces'
 
 export class WebBackend implements Backend {
   readonly entries = new EntryStore()
@@ -16,10 +18,7 @@ export class WebBackend implements Backend {
   private listeners = new Set<(e: BackendEvent) => void>()
   private ready: Promise<InitResult> | null = null
 
-  constructor(
-    private token: string | null,
-    private base = '',
-  ) {
+  constructor(private token: string | null, private base = '', private space?: Space) {
     this.worker = new Worker(new URL('../worker/sync.worker.ts', import.meta.url), { type: 'module', name: 'jess-sync' })
     this.worker.onmessage = (m: MessageEvent<Res | WorkerEvent>) => this.onMessage(m.data)
   }
@@ -67,7 +66,7 @@ export class WebBackend implements Backend {
   }
 
   async start() {
-    if (!this.ready) this.ready = this.call<InitResult>('init', this.token, this.base)
+    if (!this.ready) this.ready = this.call<InitResult>('init', this.token, this.base, undefined, spaceDbName(this.space ?? { id: 'local', name: 'Local Space', server: null }))
     const r = await this.ready
     this.entries.load(r.entries)
     this.workerStatus = r.status

@@ -3,6 +3,7 @@
 // native app.db and requests go through Rust (no CORS; the WebView never sees other origins).
 import { openDb, metaGet, metaPut, metaDelete } from '../worker/idb'
 import { isTauri, tauriInvoke } from './platform'
+import { getSpace, type Space } from './spaces'
 
 export interface AuthState {
   needs_setup: boolean
@@ -12,13 +13,26 @@ export interface AuthState {
 
 export async function getToken(): Promise<string | null> {
   if (isTauri) return tauriInvoke<string | null>('get_token')
-  const db = await openDb()
+  const db = await openDb(`jess-space-${(await getSpace()).id.replace(/[^a-zA-Z0-9_-]/g, '_')}`)
   return ((await metaGet<string>(db, 'token')) ?? null) as string | null
+}
+
+export async function getSpaceToken(space: Space): Promise<string | null> {
+  if (isTauri) return tauriInvoke<string | null>('get_token')
+  const db = await openDb(`jess-space-${space.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`)
+  return ((await metaGet<string>(db, 'token')) ?? null) as string | null
+}
+
+export async function setSpaceToken(space: Space, t: string | null): Promise<void> {
+  if (isTauri) return tauriInvoke('set_token', { token: t })
+  const db = await openDb(`jess-space-${space.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`)
+  if (t) await metaPut(db, 'token', t)
+  else await metaDelete(db, 'token')
 }
 
 export async function setToken(t: string | null): Promise<void> {
   if (isTauri) return tauriInvoke('set_token', { token: t })
-  const db = await openDb()
+  const db = await openDb(`jess-space-${(await getSpace()).id.replace(/[^a-zA-Z0-9_-]/g, '_')}`)
   if (t) await metaPut(db, 'token', t)
   else await metaDelete(db, 'token')
 }
@@ -28,7 +42,7 @@ export async function getServer(): Promise<string | null> {
   return isTauri ? tauriInvoke<string | null>('get_server') : location.origin
 }
 
-export async function setServer(url: string): Promise<void> {
+export async function setServer(url: string | null): Promise<void> {
   if (isTauri) await tauriInvoke('set_server', { url })
 }
 
@@ -50,7 +64,8 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, 
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['content-type'] = 'application/json'
   if (token) headers.authorization = `Bearer ${token}`
-  const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  const url = isTauri ? path : new URL(path, (await getSpace()).server ?? location.origin).toString()
+  const r = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   if (!r.ok) {
     let msg = `${r.status}`
     try {

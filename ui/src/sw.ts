@@ -74,16 +74,24 @@ self.addEventListener('fetch', (e) => {
 // otherwise the server with the device token (read from IndexedDB; never in a URL). Derived
 // variants (display/thumb/pdf-thumb) are small and kept in Cache Storage.
 
-const DB_NAME = 'jess'
 const CHUNK = 4 << 20
 const DERIVED_CACHE = 'jess-derived-v1'
 let tokenCache: string | null = null
 
 // Must create the same stores as src/worker/idb.ts: whichever opens the database first
 // creates it.
+function activeDbName(): string {
+  try {
+    const id = new URL(self.location.href).searchParams.get('space') ?? 'local'
+    return `jess-space-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+  } catch {
+    return 'jess-space-local'
+  }
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB_NAME, 1)
+    const r = indexedDB.open(activeDbName(), 1)
     r.onupgradeneeded = () => {
       const db = r.result
       for (const s of ['kv', 'blobchunks', 'meta']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s)

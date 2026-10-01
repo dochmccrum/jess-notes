@@ -2,10 +2,12 @@
   // First-run setup, login and pairing-link redemption (DESIGN §14). In the apps, the first
   // step is the server address (or a pairing link, which carries it).
   import { onMount } from 'svelte'
-  import { authState, getServer, login, redeem, setServer, setToken, setup, type AuthState } from '../lib/auth'
+  import { authState, getServer, login, redeem, setServer, setup, type AuthState } from '../lib/auth'
+  import { getSpace, setSpace, type Space } from '../lib/spaces'
   import { isTauri } from '../lib/platform'
 
-  let { done }: { done(token: string): void } = $props()
+  let { done }: { done(token: string | null, space: Space): void } = $props()
+  let space = $state<Space>({ id: 'local', name: 'Local Space', server: null })
   let auth = $state<AuthState | null>(null)
   let password = $state('')
   let confirm = $state('')
@@ -17,8 +19,7 @@
   let serverInput = $state('')
 
   async function finish(t: string) {
-    await setToken(t)
-    done(t)
+    done(t, space)
   }
 
   async function connect() {
@@ -28,6 +29,15 @@
     } catch {
       offline = true
     }
+  }
+
+  async function useLocal() {
+    const name = (prompt('Name this Space', space.name) ?? '').trim()
+    if (!name) return
+    space = { id: 'local-' + crypto.randomUUID(), name, server: null }
+    await setServer(null)
+    await setSpace(space)
+    done(null, space)
   }
 
   async function submitServer(e: Event) {
@@ -41,6 +51,8 @@
     busy = true
     try {
       await setServer(url.replace(/\/+$/, ''))
+      space = { ...space, id: space.id === 'local' ? 'remote-' + crypto.randomUUID() : space.id, name: space.name === 'Local Space' ? new URL(url).hostname : space.name, server: url.replace(/\/+$/, '') }
+      await setSpace(space)
       needServer = false
       if (m) return await finish((await redeem(decodeURIComponent(m[2]))).token)
       await connect()
@@ -53,7 +65,13 @@
   }
 
   onMount(async () => {
-    if (isTauri && !(await getServer())) {
+    space = await getSpace()
+    const configuredServer = await getServer()
+    if (configuredServer && !space.server) {
+      space = { ...space, id: 'remote-' + crypto.randomUUID(), name: new URL(configuredServer).hostname, server: configuredServer }
+      await setSpace(space)
+    }
+    if (isTauri && !configuredServer) {
       needServer = true
       return
     }
@@ -96,22 +114,24 @@
 <main class="auth">
   {#if needServer}
     <form onsubmit={submitServer} data-testid="server-form">
-      <h1>Jess Notes</h1>
-      <p>Your Jess server's address, or a pairing link from a device that's already signed in.</p>
+      <h1>Spaces</h1>
+      <p>Connect to a remote Space, or keep your notes on this device only.</p>
       <label>Server or pairing link <input bind:value={serverInput} placeholder="https://notes.example.com" inputmode="url" autocapitalize="off" required data-testid="server" /></label>
       <button class="btn primary" disabled={busy} type="submit">Continue</button>
+      <button class="btn" type="button" onclick={() => void useLocal()}>Create local Space</button>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
     </form>
   {:else}
     <form onsubmit={submit} data-testid="auth">
-      <h1>Jess Notes</h1>
+      <h1>{space.name}</h1>
       {#if offline}
         <p>Can't reach the server. Check your connection and reload.</p>
-        {#if isTauri}<button class="btn" type="button" onclick={() => (needServer = true)}>Change server</button>{/if}
+        <button class="btn primary" type="button" onclick={() => void useLocal()}>Create local Space</button>
+        <button class="btn" type="button" onclick={() => (needServer = true)}>Add remote Space</button>
       {:else if !auth}
         <p class="muted">{busy ? 'Pairing…' : 'Connecting…'}</p>
       {:else if auth.needs_setup}
-        <p>Choose the password for this vault. You'll use it to sign in new devices.</p>
+        <p>Choose the password for this remote Space. You'll use it to sign in new devices.</p>
         {#if auth.setup_code_required}
           <label>Setup code (printed in the server log) <input bind:value={code} autocomplete="one-time-code" required data-testid="setup-code" /></label>
         {/if}

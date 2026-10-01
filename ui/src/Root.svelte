@@ -5,13 +5,15 @@
   import Auth from './components/Auth.svelte'
   import { AppState } from './stores/app.svelte'
   import { WebBackend } from './backend/web'
-  import { getToken, setToken } from './lib/auth'
+  import { getSpaceToken, setSpaceToken } from './lib/auth'
+  import { getSpace, setSpace, type Space } from './lib/spaces'
   import { createTabGate } from './lib/tabgate'
   import { registerCommands } from './app-commands'
   import { writeBoot, type BootRecord } from './lib/boot'
   import { isTauri } from './lib/platform'
 
   let { boot }: { boot: BootRecord | null } = $props()
+  let space: Space = $state({ id: 'local', name: 'Local Space', server: null })
 
   type Phase = 'gate' | 'blocked' | 'lost' | 'auth' | 'app'
   let phase: Phase = $state('gate')
@@ -25,16 +27,14 @@
   })
 
   async function start() {
-    const token = await getToken()
-    if (!token) {
-      phase = 'auth'
-      return
-    }
+    space = await getSpace()
+    const token = await getSpaceToken(space)
+    if (!token) return void (phase = 'auth')
     await launch(token)
   }
 
-  async function launch(token: string) {
-    const backend = isTauri ? new (await import('./backend/tauri')).TauriBackend() : new WebBackend(token)
+  async function launch(token: string | null) {
+    const backend = isTauri ? new (await import('./backend/tauri')).TauriBackend() : new WebBackend(token, space.server ?? '', space)
     if (isTauri) backend.setToken(token)
     if (boot) backend.entries.load(boot.entries)
     const a = new AppState(backend)
@@ -59,7 +59,7 @@
     ;(window as unknown as { __jess?: object }).__jess = { back: () => a.back(), entryCount: () => a.entries.entries.size }
     const saveBoot = () => {
       const snapshot = [...a.entries.entries.values()]
-      void writeBoot({ lastNote: a.active, entries: snapshot, doc: null, at: Date.now() })
+      void writeBoot({ lastNote: a.active, entries: snapshot, doc: null, at: Date.now() }, space)
     }
     document.addEventListener('visibilitychange', () => {
       const fg = document.visibilityState === 'visible'
@@ -94,7 +94,7 @@
   }
 
   async function logout() {
-    await setToken(null)
+    await setSpaceToken(space, null)
     location.hash = ''
     location.reload()
   }
@@ -102,6 +102,13 @@
   async function useHere() {
     await gate.takeOver()
     await start()
+  }
+
+  async function finishAuth(t: string | null, selected: Space) {
+    space = selected
+    await setSpace(space)
+    if (t) await setSpaceToken(space, t)
+    await launch(t)
   }
 
   onMount(async () => {
@@ -121,7 +128,7 @@
 {#if phase === 'app' && app}
   <App {app} {logout} />
 {:else if phase === 'auth'}
-  <Auth done={(t) => void launch(t)} />
+<Auth done={(t, selected) => void finishAuth(t, selected)} />
 {:else if phase === 'blocked'}
   <main class="center" data-testid="blocked">
     <p>Jess is open in another tab.</p>

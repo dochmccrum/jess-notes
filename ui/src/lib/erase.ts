@@ -1,6 +1,5 @@
 // "Erase this device's local copy" (Settings): wipes IndexedDB (notes, queue, blobs, token) and
 // OPFS (search index) on the next load, before anything opens them. Device settings are kept.
-import { DB_NAME } from '../worker/idb'
 import { isTauri, tauriInvoke } from './platform'
 
 const FLAG = 'jess.erase'
@@ -19,7 +18,14 @@ export function requestErase() {
 export async function eraseIfRequested(): Promise<void> {
   if (isTauri || localStorage.getItem(FLAG) !== '1') return
   await new Promise<void>((resolve, reject) => {
-    const r = indexedDB.deleteDatabase(DB_NAME)
+    let dbName = 'jess-space-local'
+    try {
+      const s = JSON.parse(localStorage.getItem('jess.active-space') ?? '{}') as { id?: string }
+      if (s.id) dbName = `jess-space-${s.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    } catch {
+      /* use the local Space */
+    }
+    const r = indexedDB.deleteDatabase(dbName)
     r.onsuccess = () => resolve()
     r.onerror = () => reject(r.error)
     r.onblocked = () => resolve() // another tab still has it open; the tab gate prevents that
