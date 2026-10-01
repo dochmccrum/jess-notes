@@ -31,7 +31,8 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /@touch/ },
     { name: 'touch', use: { ...devices['Pixel 7'] }, grep: /@touch/ },
-    ...(webkit ? [{ name: 'webkit', use: { ...devices['Desktop Safari'], baseURL: `http://127.0.0.1:${port + 1}` }, grepInvert: /@touch|@chromium-only/ }] : []),
+    // On GitHub's runners WebKit's first page can take ~17 s to create, which the first test pays.
+    ...(webkit ? [{ name: 'webkit', timeout: 60_000, use: { ...devices['Desktop Safari'], baseURL: `http://127.0.0.1:${port + 1}` }, grepInvert: /@touch|@chromium-only/ }] : []),
   ],
   webServer: [
     server(port, process.env.E2E_DATA ?? mkdtempSync(join(tmpdir(), 'jess-e2e-'))),

@@ -29,7 +29,10 @@ test('rename rewrites links on every device', async ({ browser }) => {
   await expect(treeItem(b, `${t} renamed`)).toBeVisible()
 })
 
-test('offline edits sync after reconnect', async ({ browser }) => {
+test('offline edits sync after reconnect', async ({ browser, browserName }) => {
+  // Playwright's WebKit offline emulation doesn't stop the sync worker's WebSocket: it reconnects
+  // at once, so "offline" edits would sync live and the Offline status only flashes.
+  test.skip(browserName === 'webkit', "WebKit's offline emulation doesn't cover worker WebSockets")
   const ctxA = await browser.newContext()
   const a = await ctxA.newPage()
   const b = await (await browser.newContext()).newPage()
