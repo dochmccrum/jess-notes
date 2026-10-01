@@ -178,6 +178,26 @@ async function main() {
   launch()
   let page = await attach()
   console.log(`WebView: ${await page.evaluate(() => /Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0])}`)
+  // Frame pacing (DESIGN §23.4): the WebView follows the display; on a 120 Hz phone MainActivity
+  // asks for the fastest mode. `SMOKE_HZ=120` turns the log into a check.
+  const fps = await page.evaluate(
+    () =>
+      new Promise((res) => {
+        let n = 0
+        let t0 = 0
+        const f = (t) => {
+          t0 ||= t
+          if (t - t0 < 2000) {
+            n++
+            requestAnimationFrame(f)
+          } else res(n / ((t - t0) / 1000))
+        }
+        requestAnimationFrame(f)
+      }),
+  )
+  console.log(`frames: ${fps.toFixed(1)} fps`)
+  const hz = Number(process.env.SMOKE_HZ ?? 0)
+  if (hz && fps < hz * 0.95) throw new Error(`rAF at ${fps.toFixed(1)} fps on a ${hz} Hz display`)
 
   // First launch: server address, then password.
   await page.fill('[data-testid=server]', base)

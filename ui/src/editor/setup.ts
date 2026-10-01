@@ -1,11 +1,12 @@
 // Editor construction (DESIGN §10): CodeMirror 6 + y-codemirror.next, created imperatively; no
 // Svelte state is updated from CodeMirror transactions.
 
-import { EditorState, type Extension } from '@codemirror/state'
+import { EditorState, Prec, type Extension } from '@codemirror/state'
 import { EditorView, keymap, highlightSpecialChars, drawSelection, dropCursor, highlightActiveLine } from '@codemirror/view'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { syntaxHighlighting, HighlightStyle, indentOnInput, bracketMatching } from '@codemirror/language'
+import { markdownKeymap, markdownLanguage, pasteURLAsLink } from '@codemirror/lang-markdown'
+import { Language, LanguageSupport, syntaxHighlighting, HighlightStyle, indentOnInput, bracketMatching } from '@codemirror/language'
+import type { MarkdownParser } from '@lezer/markdown'
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { tags as t } from '@lezer/highlight'
@@ -77,6 +78,22 @@ export interface EditorOptions {
   onFiles?(view: EditorView, files: File[], pasted: boolean): void
 }
 
+/**
+ * Markdown (GFM + our Obsidian syntax) without `markdown()`'s `parseCode` step. That step nests
+ * an HTML parser into HTML blocks and tags through `parseMixed`, which walks the whole tree after
+ * every parse: a cost per keystroke that grows with the note (6 ms in a 1 MB note, DESIGN §23).
+ * Raw HTML is shown as source anyway (§14), and we use no code-block languages. Kept from
+ * `markdown()`: its keymap (list continuation) and pasting a URL over a selection as a link.
+ */
+let mdSupport: LanguageSupport | null = null
+function markdownSupport(): LanguageSupport {
+  mdSupport ??= new LanguageSupport(new Language(markdownLanguage.data, (markdownLanguage.parser as MarkdownParser).configure([obsidian]), [], 'markdown'), [
+    pasteURLAsLink,
+    Prec.high(keymap.of(markdownKeymap)),
+  ])
+  return mdSupport
+}
+
 export function createEditor(parent: HTMLElement, o: EditorOptions): EditorView {
   const ytext = o.ydoc.getText('t')
   const undo = new Y.UndoManager(ytext)
@@ -94,7 +111,7 @@ export function createEditor(parent: HTMLElement, o: EditorOptions): EditorView 
       bracketMatching(),
       closeBrackets(),
       highlightSelectionMatches(),
-      markdown({ base: markdownLanguage, extensions: [obsidian] }),
+      markdownSupport(),
       syntaxHighlighting(highlight),
       livePreview(o.links),
       autocompletion({ override: [wikilinkSource(o.store, () => o.entryId)], icons: false, interactionDelay: 0 }),

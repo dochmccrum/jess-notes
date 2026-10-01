@@ -39,6 +39,8 @@ test('quick switcher and command palette', async ({ page }) => {
   await page.keyboard.press(`${MOD}+o`)
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.keyboard.type(name.slice(0, -2))
+  // Enter acts on the top result: wait for it to be this note, not a result of the partial query.
+  await expect(page.getByRole('option').first()).toContainText(name)
   await page.keyboard.press('Enter')
   await expect(page.locator('.cm-content')).toContainText('zzz')
   await page.keyboard.press(`${MOD}+p`)

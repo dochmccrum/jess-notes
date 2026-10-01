@@ -65,3 +65,16 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
   const r = await request.post('/api/admin/import', { headers: auth, data: { zip_hash: hash } })
   if (!r.ok()) throw new Error(`import ${r.status()} ${await r.text()}`)
 }
+
+/**
+ * Puts `text` into the editor as a paste, the way a user brings in a big note. (Playwright's
+ * `insertText` goes through Blink's contenteditable editing, which handles every newline as its
+ * own paragraph insert: quadratic, 80 s for 200 KB, while CodeMirror takes a 1 MB paste in 30 ms.)
+ */
+export async function pasteText(page: Page, text: string) {
+  await page.locator('.cm-content').evaluate((el, t) => {
+    const dt = new DataTransfer()
+    dt.setData('text/plain', t)
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+  }, text)
+}

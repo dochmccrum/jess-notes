@@ -13,6 +13,13 @@ use tauri::{Manager, State};
 
 type Events = Arc<Mutex<Option<Channel<Value>>>>;
 
+/// Desktop Linux runs on CEF (120 Hz, DESIGN §23); elsewhere the system WebView through wry.
+#[cfg(all(target_os = "linux", not(target_os = "android")))]
+pub type Rt = tauri_runtime_cef::CefRuntime<tauri::EventLoopMessage>;
+#[cfg(not(all(target_os = "linux", not(target_os = "android"))))]
+pub type Rt = tauri::Wry;
+type AppHandle = tauri::AppHandle<Rt>;
+
 struct App {
     native: Native,
     events: Events,
@@ -144,7 +151,7 @@ fn intent(ops: String, app: State<'_, App>) -> Result<(), String> {
 /// Erasing local data (Settings → "Erase this device"): the stores are open, so the wipe happens
 /// at the next launch, before anything opens them.
 #[tauri::command]
-fn request_erase(app: State<'_, App>, handle: tauri::AppHandle) -> Result<(), String> {
+fn request_erase(app: State<'_, App>, handle: AppHandle) -> Result<(), String> {
     app.native.flush();
     std::fs::write(app.root.join("ERASE"), b"1").map_err(|e| e.to_string())?;
     handle.restart()
@@ -266,7 +273,7 @@ async fn import_plan(
     hide_pdfs: bool,
     conflict: String,
     app: State<'_, App>,
-    handle: tauri::AppHandle,
+    handle: AppHandle,
 ) -> Result<Value, String> {
     let n = app.native.clone();
     let src = match kind.as_str() {
@@ -300,7 +307,7 @@ async fn export_to(
     portable: bool,
     zip: bool,
     app: State<'_, App>,
-    handle: tauri::AppHandle,
+    handle: AppHandle,
 ) -> Result<(), String> {
     let n = app.native.clone();
     if zip && is_content_uri(&path) {
@@ -318,11 +325,7 @@ fn is_content_uri(path: &str) -> bool {
 /// Opens a picked document through the fs plugin (a `content://` URI becomes a descriptor from the
 /// content resolver). Zips are read with seeks: a provider that only hands out a pipe (some cloud
 /// providers) is copied to the cache directory first.
-fn open_document(
-    handle: &tauri::AppHandle,
-    uri: &str,
-    write: bool,
-) -> Result<std::fs::File, String> {
+fn open_document(handle: &AppHandle, uri: &str, write: bool) -> Result<std::fs::File, String> {
     use std::io::Seek;
     use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
     let url = uri.parse().map_err(|e| format!("{uri}: {e}"))?;
@@ -378,9 +381,37 @@ fn open_native(root: &Path, events: Events) -> Result<Native, String> {
     tauri::async_runtime::block_on(async move { Native::open(&data, sink) })
 }
 
+/// CEF re-executes this binary for its renderer, GPU and utility processes, and each must register
+/// the same custom schemes. Call first thing in `main`: true means this process was such a helper
+/// and has finished.
+#[cfg(all(target_os = "linux", not(target_os = "android")))]
+pub fn cef_helper() -> bool {
+    let mut command_line_args = vec![("password-store".into(), Some("basic".into()))];
+    // The desktop smoke test drives the app over the DevTools protocol (WebKitWebDriver can't).
+    if let Ok(port) = std::env::var("JESS_CDP_PORT") {
+        command_line_args.push(("remote-debugging-port".into(), Some(port)));
+    }
+    tauri_runtime_cef::configure(tauri_runtime_cef::CefConfig {
+        identifier: "app.jessnotes.notes".into(),
+        command_line_args,
+        custom_schemes: vec![
+            "tauri".into(),
+            "ipc".into(),
+            "asset".into(),
+            "jess-blob".into(),
+        ],
+        ..Default::default()
+    });
+    if std::env::args().any(|a| a.starts_with("--type=")) {
+        tauri_runtime_cef::run_cef_helper_process();
+        return true;
+    }
+    false
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    tauri::Builder::<Rt>::new()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {

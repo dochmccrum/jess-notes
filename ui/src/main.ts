@@ -7,6 +7,7 @@ import { loadDevice } from './stores/device'
 import { applyTheme } from './lib/theme'
 import { eraseIfRequested } from './lib/erase'
 import { isTauri } from './lib/platform'
+import { busyStats, calibrate, frameInterval, frameStats } from './lib/frames'
 
 performance.mark('boot-start')
 applyTheme(loadDevice().theme)
@@ -27,4 +28,9 @@ void eraseIfRequested()
   .then(readBoot)
   .then((boot) => {
     mount(Root, { target: document.getElementById('app')!, props: { boot } })
+    // The display's refresh interval sets every frame budget (DESIGN §23); learn it once shown.
+    void calibrate()
   })
+
+// Frame recorders for the smoothness tests and manual profiling (`__jessFrames.busyStats()`).
+;(window as unknown as { __jessFrames?: object }).__jessFrames = { frameStats, busyStats, frameInterval }

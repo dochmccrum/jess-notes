@@ -19,6 +19,7 @@ Status: **approved** (2026-09-29). All decisions D1–D11 accepted as recommende
 | D9 | **Web: only one active tab.** A second tab shows "Jess is open in another tab — use here", coordinated with Web Locks. This avoids a multi-tab leader-election layer. | Yes | §11.6 |
 | D10 | **First-run setup is protected by a one-time setup code** printed to the server log, unless `JESS_ADMIN_PASSWORD` is set. Without it, whoever reaches a fresh public server first owns it. | Yes | §14 |
 | D11 | **Line endings and BOM are stored verbatim** in the Yjs text. CodeMirror uses `lineSeparator: "\n"` with `\r` hidden, so CRLF and mixed-ending files round-trip byte-for-byte. A `.md` file that isn't valid UTF-8 is stored as a read-only blob-backed note. | Yes | §10.6 |
+| D12 | **120 Hz everywhere (owner requirement, 2026-10-01).** Every interaction keeps up with the display's refresh rate, up to 120 Hz, on every platform. Desktop Linux therefore runs on CEF (Chromium) instead of WebKitGTK, which caps page rendering at 60 Hz; Android and the web already use engines that follow the display. | Owner's call, implemented in phase 6.5 | §23 |
 
 Everything else is my call. It's recorded below with reasoning, and you can override any of it.
 
@@ -751,7 +752,7 @@ The projection is shared by export, the server mirror, integrity-check and the t
 
 ## 16. Platform notes
 
-- **Tauri 2 Linux**: WebKitGTK. Everything heavy is native, so the WebView only needs ES2020 plus CSS custom properties. WebKitGTK support is checked for `OffscreenCanvas` (local thumbnails fall back to Rust anyway), `ResizeObserver` and `IntersectionObserver`. Packaged as AppImage and deb.
+- **Tauri 2 Linux**: CEF since phase 6.5 (§23); WebKitGTK until then. The notes in this bullet describe the WebKitGTK build. Everything heavy is native, so the WebView only needs ES2020 plus CSS custom properties. WebKitGTK support is checked for `OffscreenCanvas` (local thumbnails fall back to Rust anyway), `ResizeObserver` and `IntersectionObserver`. Packaged as AppImage and deb.
 - **Android**: the system WebView (target: Chromium 100+ in CI, with a documented minimum). The Rust core, SQLite and file blobs are native. The photo picker uses the Tauri dialog/file plugins. The keyboard-aware editor uses `visualViewport` resize with `interactive-widget=resizes-content`. Back gesture handling is described in §11.5.
 - **iPadOS** (not scheduled: possible later, see §21): WKWebView. HEIC conversion on paste uses WebKit's decode through a canvas, and a Swift plugin for ImageIO is optional later. Pencil input works as a pointer (no drawing). Hardware keyboard shortcuts go through the keybinding registry (Cmd). **What you'll need on a Mac** (details in docs/MAC.md, phase 7): Xcode, an Apple ID with a paid Developer Program membership to install on a real iPad for more than 7 days, `rustup target add aarch64-apple-ios`, `pnpm tauri ios init`, `pnpm tauri ios build`, signing set in Xcode. The iOS target will be kept compiling in config from phase 5 onwards.
 - **Cold start on Android** is dominated by WebView initialisation (about 150–300 ms on mid-range devices). The <500 ms target is measured from `Activity.onCreate` to the `note-visible` mark. That's the riskiest performance target, and phase 8 may need a native splash plus pre-warming.
@@ -835,6 +836,7 @@ Real mid-range Android numbers come from a documented manual run (a Tauri debug 
 - `katex`: lazy-loaded.
 - `sqlite-wasm`: lazy-loaded (web only).
 - `image` plus zune decoders: server only.
+- CEF (Chromium Embedded Framework, Linux app only, since phase 6.5): about 360 MB installed, and the deb grows from 9.6 MB to 157 MB. It's the only way to render at 120 Hz on Linux (§23.2). Used through `tauri-runtime-cef`, pinned to a commit.
 
 Everything else is small: axum, tokio, rusqlite, sha2, minicbor, argon2, saphyr, zip, uuid, imagesize; and on the TS side codemirror, yjs, y-codemirror.next, lib0, client-zip.
 
@@ -865,6 +867,9 @@ Everything else is small: axum, tokio, rusqlite, sha2, minicbor, argon2, saphyr,
 docs/MAC.md") is dropped from the plan and kept as a possibility for later (see "Possible later"
 in `docs/PHASES.md`). The web app still supports iPad Safari. Performance + polish becomes
 phase 7. Nothing already built changes: the shared mobile entry point stays for Android.
+
+**Plan change (owner, 2026-10-01):** phase 6.5 added: flawless 120 Hz on every platform, with
+the frame-pacing work it needs (§23). Phase 7 (performance + polish) follows it.
 
 Each phase ends with tests passing, a commit pushed to `origin/main` (github.com/dochmccrum/jess-notes, private), and a short summary in `docs/PHASES.md`.
 
@@ -1149,3 +1154,118 @@ each tightens a rule the simulation showed was underspecified.
     but left its element in place and never cleared the embed's handle, so it couldn't go live
     again when scrolled back to. Eviction now puts the thumbnail back and lets the embed go live
     again next time it comes into view.
+
+---
+
+## 23. 120 Hz frame pacing (phase 6.5)
+
+The owner's requirement (2026-10-01): flawless 120 Hz on every platform. This section defines what
+that means, how it's measured, and what the app does to meet it.
+
+### 23.1 What "flawless" means
+
+At the display's refresh rate (8.3 ms per frame at 120 Hz), during the interactions people
+actually do: typing (including in a 1 MB note and next to rendered maths), scrolling a long note
+and a PDF, the quick switcher, and the sidebar and drawer.
+
+- **Acceptance, on real high-refresh displays:** `requestAnimationFrame` runs at the display's
+  rate, and at most 1 % of frames are late (more than 1.5 intervals), measured with
+  `frameStats` (`ui/src/lib/frames.ts`). Run locally on the dev machine's 120 Hz panel
+  (`E2E_HZ=120 pnpm exec playwright test --headed e2e/smoothness.spec.ts`, and the Linux app's
+  smoke test with `SMOKE_HZ=120`). On Android it needs a 120 Hz phone (docs/ANDROID.md).
+- **CI, headless (`ui/e2e/smoothness.spec.ts`):** main-thread tasks from a Chrome trace, which
+  make frames late on any display.
+  - **Typing in text** (our own code's cost): the p95 task fits one 120 Hz frame, and the longest
+    fits two.
+  - **Rendering-heavy interactions** (typing beside maths, scrolling, PDFs, one-off actions): the
+    longest task fits six frames. That's only a regression guard: headless Chromium paints and
+    rasterises in software, at 2–3× the cost of a real GPU.
+
+  Runners get 1.5× headroom. Only the `toplevel` and `blink` trace categories are recorded (the
+  timeline categories doubled the tasks' cost), and Playwright's own tracing is off (its DOM
+  snapshots run in the page). Other engines have no trace API: WebKit logs a heartbeat's
+  main-thread stretches (`busyStats`) instead, which over-count (back-to-back input and frame
+  tasks read as one stretch) and so aren't asserted on.
+
+Measured on the dev machine at 120 Hz (2026-10-01), after the fixes in §23.3: typing in a 1 MB
+note, at its top or its end, has 0 late frames (headless task p95 4–7 ms). Typing beside maths,
+scrolling a long note, the sidebar, the quick switcher and PDF scrolling have 0–2 late frames out
+of 200–400. The worst was 2 out of 313 (0.6 %), scrolling a long note at 7,200 px/s, where
+CodeMirror renders newly exposed lines in 12–19 ms tasks while the compositor keeps scrolling.
+
+### 23.2 Engines
+
+Measured on the dev machine (a 119.98 Hz eDP panel, Fedora, Wayland), with a page that only runs
+a `requestAnimationFrame` loop:
+
+| engine | rAF rate |
+|---|---|
+| WebKitGTK 2.54 (GTK3 and GTK4 builds), every setting tried | 60–62 fps |
+| Chromium 141 (Playwright), X11 and Wayland | 119.1–119.4 fps |
+| CEF 150 inside a Tauri window (`tauri-runtime-cef`) | 118.8–120 fps |
+
+WebKitGTK's 60 Hz limit doesn't come from anything an embedder can configure. GTK's own frame clock
+on the same display ticks at 119.5 Hz, and WebKitGTK stayed at 60 with each of these:
+`PreferPageRenderingUpdatesNear60FPS` turned off, the DMA-BUF renderer off, compositing off, CPU
+rendering, and a forced vblank timer. So the Linux app runs on CEF:
+
+- **Runtime:** `tauri-runtime-cef` from github.com/SableClient/tauri-runtime-cef. It's a standalone
+  port of Tauri's unreleased `feat/cef` branch to the published Tauri 2 crates, pinned to commit
+  `6568170`. It needs Tauri 2.11 (`tauri-runtime` 2.11.3 and the matching 2.6.x
+  codegen/macros/build crates, and dialog 2.7 / fs 2.5), and winit `0.31.0-beta.2` (beta.3 renamed
+  the drag-and-drop events). All of this is pinned in `Cargo.lock`. Move up when the fork does,
+  and retire it when Tauri ships an official CEF runtime.
+- **Windowing:** X11 (XWayland on Wayland desktops), which is the backend the fork verifies.
+  Chromium runs at 120 Hz there too.
+- **Process model:** CEF re-executes the binary for its helper processes. `main` calls
+  `jess_notes_app::cef_helper()` first, which registers the same custom schemes (`tauri`, `ipc`,
+  `asset`, `jess-blob`) in every process and returns early in helpers. CEF ignores SIGTERM: tests
+  close the window and then kill the process group.
+- **Symbols:** the binary is linked with `--exclude-libs,ALL`. Otherwise it exports our bundled
+  SQLite's symbols, and NSS, which CEF runs in-process, loads the system libsqlite3, binds to our
+  copy and crashes on its first certificate check.
+- **Packaging:** the CEF runtime (`libcef.so` stripped, ANGLE/SwiftShader, `.pak`, ICU, V8
+  snapshot, locales) goes in `/usr/lib/jess-notes/`, and the binary's rpath includes
+  `$ORIGIN/../lib/jess-notes`. `apps/tauri/cef/stage.sh` stages it from the Cargo target directory
+  for the deb and AppImage. Measured cost: the deb is 157 MB (was 9.6 MB) and the AppImage 170 MB
+  (was 116 MB), and about 360 MB is installed. `apps/tauri/cef/fix-deb.sh` removes the
+  `libwebkit2gtk-4.1-0` dependency that Tauri's bundler always adds, since the CEF build doesn't
+  link WebKitGTK. The deb also installs an AppArmor profile (`/etc/apparmor.d/jess-notes`, loaded
+  by its postinst) that lets Chromium's sandbox create user namespaces on Ubuntu 23.10+, which
+  restricts them. AppImages can't install a profile; on those systems the sandbox needs the
+  distribution's own setting relaxed.
+- **Tests:** the desktop smoke test drives the app over the DevTools protocol (`JESS_CDP_PORT`),
+  because WebKitWebDriver/tauri-driver can't drive CEF.
+- **Android** keeps the system WebView (Chromium, through wry): it follows the display's refresh
+  rate. `MainActivity` also asks for the display's highest refresh rate (§23.4).
+
+### 23.3 Frame-pacing mechanics (`ui/src/lib/frames.ts`)
+
+- **Measured interval:** the refresh interval is sampled at start-up and refined from frames the app
+  runs anyway, with no idle rAF loop. Every budget derives from it, never from an assumed 60 Hz.
+- **Per-frame read/write phases:** `measure` (DOM reads) and `mutate` (DOM writes) are batched into
+  the next frame, all reads before any writes, so no frame forces layout halfway through its own
+  writes. `oncePerFrame` coalesces bursts (scroll events, worker events) to one update a frame.
+- **Time slicing:** `sliced` runs long main-thread work in pieces of at most 40 % of a frame
+  (3.3 ms at 120 Hz). It yields with `scheduler.yield()`, or a message-channel task where that's
+  missing (`setTimeout(0)` is clamped to 4 ms), and can be aborted when superseded.
+- **Compositor-only animation:** UI animation uses `transform` and `opacity` only, and the drawer
+  and sidebar are on their own layers while they move.
+- **No full-tree scan per keystroke:** `@codemirror/lang-markdown`'s `markdown()` always adds
+  `parseCode`, which nests an HTML parser through `parseMixed`. `parseMixed` walks the whole tree
+  after every parse, which cost 6 ms per keystroke in a 1 MB note. The editor builds the same
+  markdown language (GFM plus our syntax, `markdownKeymap`, `pasteURLAsLink`) without it, since
+  raw HTML is shown as source anyway (§14). Typing at the top of a 1 MB note went from a 7.7 ms
+  p99 task with 1 late frame to a 3.3 ms one with none.
+- **Tried and dropped:** isolating rendered maths (`inline-block` plus `contain`) put
+  paragraph-level `$$…$$` inline and gained nothing measurable.
+
+### 23.4 Android
+
+`MainActivity` asks for the display's fastest mode at its current resolution
+(`preferredDisplayModeId`). Without that, many phones run apps at 60 Hz on a 120 Hz panel. The
+WebView is Chromium, so it renders at whatever rate the window gets. The system can still lower
+the rate (battery saver, thermal limits), and a fixed preferred mode can stop LTPO panels from
+dropping their idle refresh rate, so that costs some battery. The emulators only offer 60 Hz;
+the 120 Hz check needs a real phone (docs/ANDROID.md).
+

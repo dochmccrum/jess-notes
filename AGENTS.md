@@ -10,13 +10,14 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 2. `docs/SPEC.md` — the owner's original brief, verbatim. Requirements and acceptance targets live here.
 3. `docs/PHASES.md` — phase checklist, current status, and phase log. **Keep it updated.**
 
-## Current state (2026-09-30)
+## Current state (2026-10-01)
 - Phases 0–6 done (see the Phase log in `docs/PHASES.md`); implementation decisions beyond the approved design are in `docs/DESIGN.md` §22.
-- Next step: Phase 7 (performance + polish). Open items carried from phase 6 are listed there (Android cold start on a real phone, native binary size, web keystroke durability window).
+- Phase 6.5 (owner requirement: 120 Hz everywhere, DESIGN §23, decision D12) is in progress: the Linux app runs on CEF (`tauri-runtime-cef`, pinned; Tauri held at 2.11 for it), frame pacing in `ui/src/lib/frames.ts`, smoothness e2e in `ui/e2e/smoothness.spec.ts`. Open items are in `docs/PHASES.md`. Phase 7 (performance + polish) follows.
 - All work is on `main`.
 - Build: `cd ui && corepack enable && pnpm install && pnpm wasm && pnpm build` (needs `wasm-bindgen-cli` 0.2.129, the `wasm32-unknown-unknown` target, and `wasm-opt` from binaryen for the real sizes); server `cargo build -p jess-server`; tests `cargo test --workspace`, `SIM_SEEDS=10000 cargo test --release -p jess-server --test sim`, `cd ui && pnpm test && pnpm e2e` (e2e needs the built UI and `target/debug/jess`; set `JESS_PDFIUM_LIB` for PDF tests — CI shows how to fetch `libpdfium.so`).
 - WebKit e2e (`E2E_WEBKIT=1`) doesn't run on Fedora (Playwright's WebKit build needs Ubuntu libraries). Run it in `mcr.microsoft.com/playwright:v1.56.1-noble` with the repo mounted at the same path, `JESS_BIN` pointing at a `jess` built in `rust:1.93-bookworm` (the host binary needs a newer glibc), and `JESS_PDFIUM_LIB` set.
-- Linux app: `cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage`; smoke test `node apps/tauri/e2e/smoke.mjs target/release/jess-notes-app target/debug/jess` (needs `tauri-driver` 2.1.0 and WebKitWebDriver; `SMOKE_TIMINGS=1` prints cold-start timings).
+- Linux app (CEF, DESIGN §23.2): `cargo build --release -p jess-notes-app --features tauri/custom-protocol && apps/tauri/cef/stage.sh && (cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage) && apps/tauri/cef/fix-deb.sh target/release/bundle/deb/*.deb`. The first build downloads CEF (~1.4 GB unpacked into the target dir; `cmake` needed). Smoke test over CDP: `node apps/tauri/e2e/smoke.mjs target/release/jess-notes-app target/debug/jess` (`SMOKE_HZ=120` checks the frame rate on a 120 Hz display, `SMOKE_TIMINGS=1` prints cold-start timings). CEF ignores SIGTERM: kill stray `jess-notes-app` processes with SIGKILL. A plain `cargo build` without the `custom-protocol` feature loads the Vite dev URL.
+- Smoothness: `cd ui && E2E_HZ=120 npx playwright test --project=chromium --headed e2e/smoothness.spec.ts` on the dev machine's 120 Hz panel is the acceptance run (≤ 1 % late frames); headless runs assert main-thread task budgets.
 - Android: see `docs/ANDROID.md` (toolchain, build, signing, device smoke test `apps/tauri/e2e/android-smoke.mjs`). Minimum engine Chromium 100, checked with `node ui/e2e/old-chromium.mjs <chrome>`.
 
 ## Working rules (from the owner)
@@ -38,6 +39,6 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 - Note text stored byte-for-byte including CRLF/BOM; CodeMirror `lineSeparator: "\n"` (D11).
 
 ## Environment notes
-- Dev machine: Fedora Linux; rustc/cargo 1.93, Node 22, git, docker + podman available. pnpm is **not** installed and Fedora's Node has no `corepack`: use `npx -y pnpm@12.8.1 …`. WebKitGTK dev packages and WebKitWebDriver are installed; binaryen via Homebrew; no Xvfb (the smoke test opens windows on the real display). Android: SDK in `~/Android/Sdk` with NDK 28.2.13676358 (set `NDK_HOME` to it; the shell's default points at a missing 26.1) and AVDs `jess33` (WebView 109), `jess29` (WebView 74), `jess36`; Gradle needs `JAVA_HOME=~/android-studio/android-studio/jbr` (the system Java is a headless JRE 25).
+- Dev machine: Fedora Linux; rustc/cargo 1.93, Node 22, git, docker + podman available. pnpm is **not** installed and Fedora's Node has no `corepack`: use `npx -y pnpm@12.8.1 …`. WebKitGTK dev packages and WebKitWebDriver are installed (no longer used by the Linux app); binaryen via Homebrew; no Xvfb (the smoke test opens windows on the real display); the laptop panel is 120 Hz (eDP-1, 119.98 Hz). `/tmp` is a 16 GB tmpfs: keep CEF builds and big scratch files out of it. Android: SDK in `~/Android/Sdk` with NDK 28.2.13676358 (set `NDK_HOME` to it; the shell's default points at a missing 26.1) and AVDs `jess33` (WebView 109), `jess29` (WebView 74), `jess36`; Gradle needs `JAVA_HOME=~/android-studio/android-studio/jbr` (the system Java is a headless JRE 25).
 - Deployment target: Coolify (Traefik terminates TLS). CI assumed to be GitHub Actions.
 - iPadOS is not in the plan (owner, 2026-09-30); if it's picked up later, builds need the owner's Mac and a `docs/MAC.md`.

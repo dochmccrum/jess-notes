@@ -1,0 +1,10 @@
+# Lets the app's Chromium (CEF) sandbox create user namespaces on distributions that restrict
+# them through AppArmor (Ubuntu 23.10+). Same approach as Chrome's and Electron apps' profiles.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile jess-notes /usr/bin/jess-notes-app flags=(unconfined) {
+  userns,
+
+  include if exists <local/jess-notes>
+}

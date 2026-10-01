@@ -66,6 +66,20 @@ node apps/tauri/e2e/android-smoke.mjs target/debug/jess
 The server runs on the host and is reached through `adb reverse`. CI runs the same script on an
 API 33 emulator.
 
+### 120 Hz (DESIGN §23.4)
+
+The app asks for the display's fastest mode, and the smoke test logs the WebView's frame rate.
+Emulators only offer 60 Hz, so check on a real 120 Hz phone (with any battery saver off, which
+caps the rate):
+
+```sh
+SMOKE_HZ=120 node apps/tauri/e2e/android-smoke.mjs target/debug/jess
+```
+
+It fails if `requestAnimationFrame` runs below 114 fps. Scrolling and typing smoothness follow
+the desktop numbers (the same Chromium engine), but a mid-range phone's CPU is 2–4× slower: if
+it drops frames, note the interaction in docs/PHASES.md.
+
 ### Older WebViews
 
 The minimum is **Chromium 100** (DESIGN §22 item 53). Real devices update "Android System WebView"

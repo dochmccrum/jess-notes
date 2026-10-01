@@ -193,3 +193,6 @@ These are planned later features: search improvements, tabs/split panes, tree dr
    - Phase 8: performance pass against the benchmarks, then polish.
 3. Keep dependencies lean. Justify any heavy dependency. Prefer boring, well-maintained libraries.
 4. Ask me before making decisions that are expensive to reverse (data model, sync protocol, rename/link semantics, blob addressing). Otherwise make sensible choices and note them in the design doc.
+
+## Addendum (owner, 2026-10-01)
+- New requirement: flawless 120 Hz performance across all platforms, with the frame-timing mechanics needed for maximum smoothness. On Linux, if WebKitGTK isn't good enough, use CEF (SableClient/tauri-runtime-cef), but try to make it work without it first. (Added as phase 6.5; definition and measurement in DESIGN §23.)

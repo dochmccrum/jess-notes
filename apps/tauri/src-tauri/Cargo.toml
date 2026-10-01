@@ -10,18 +10,29 @@ name = "jess_notes_app"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "~2.6", features = [] }
 
 [dependencies]
 jess-native = { path = "../../native" }
 # No asset compression: the UI is served from memory as-is (brotli-decoding every script at
 # launch cost cold-start time; the binary grows by a few MB).
-tauri = { version = "2", default-features = false, features = ["wry", "common-controls-v6", "dynamic-acl", "x11", "dbus"] }
-tauri-plugin-dialog = "2"
+tauri = { version = "~2.11", default-features = false, features = ["common-controls-v6", "dynamic-acl", "dbus"] }
+tauri-plugin-dialog = "~2.7"
 # Only its Rust API: opening Android `content://` documents (import/export zips) as files.
-tauri-plugin-fs = "2"
+tauri-plugin-fs = "~2.5"
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread"] }
 percent-encoding.workspace = true
 # Binary IPC bodies on Android arrive as base64 (see `raw_body`).
 base64 = "0.22"
+
+# Desktop Linux runs on CEF: WebKitGTK caps page rendering at 60 Hz, and the app must keep up with
+# 120 Hz displays (DESIGN §23). The runtime is a standalone port of Tauri's unreleased `feat/cef`
+# branch to published Tauri 2, pinned to a reviewed commit. The CEF binaries come from the `cef`
+# crate's build script; packaging copies them next to the app (scripts in apps/tauri/cef/).
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
+tauri-runtime-cef = { git = "https://github.com/SableClient/tauri-runtime-cef", rev = "6568170ae5fb27b38dae1e367f0bb3a09a040152" }
+
+# Everywhere else, the system WebView through wry (Android: Chromium, so 120 Hz where the display is).
+[target.'cfg(not(all(target_os = "linux", not(target_os = "android"))))'.dependencies]
+tauri = { version = "~2.11", default-features = false, features = ["wry", "common-controls-v6", "dynamic-acl", "dbus"] }

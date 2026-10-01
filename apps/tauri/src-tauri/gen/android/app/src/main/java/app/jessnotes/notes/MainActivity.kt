@@ -1,5 +1,6 @@
 package app.jessnotes.notes
 
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
@@ -26,6 +27,20 @@ class MainActivity : TauriActivity() {
       v.setPadding(i.left, i.top, i.right, i.bottom)
       WindowInsetsCompat.CONSUMED
     }
+    preferHighestRefreshRate()
+  }
+
+  // 120 Hz everywhere (DESIGN §23.4): without this, many phones run apps at 60 Hz on a 120 Hz
+  // panel. Asks for the fastest mode at the current resolution; the WebView (Chromium) then
+  // renders at that rate, and the system can still lower it (battery saver, thermal limits).
+  private fun preferHighestRefreshRate() {
+    val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
+    display ?: return
+    val current = display.mode
+    val best = display.supportedModes
+      .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+      .maxByOrNull { it.refreshRate } ?: return
+    window.attributes = window.attributes.also { it.preferredDisplayModeId = best.modeId }
   }
 
   override fun onWebViewCreate(webView: WebView) {

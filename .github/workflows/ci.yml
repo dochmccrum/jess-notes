@@ -116,20 +116,34 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable
-      - name: WebKitGTK and bundling dependencies, plus the WebDriver for the smoke test
+      - name: GTK, CEF's build and run-time dependencies, bundling tools
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            librsvg2-dev libayatana-appindicator3-dev patchelf file xvfb webkit2gtk-driver binaryen
+            libx11-dev libxdo-dev cmake ninja-build librsvg2-dev libayatana-appindicator3-dev patchelf file xvfb binaryen
       - run: cargo install --locked wasm-bindgen-cli --version 0.2.129
-      - run: cargo install --locked tauri-driver --version 2.1.0
       - run: cd ui && pnpm install --frozen-lockfile && pnpm wasm && pnpm build
       - run: cargo clippy -p jess-notes-app --all-targets -- -D warnings
       - run: cargo build -p jess-server
-      - name: Build the app and its .deb / AppImage
-        run: cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage
-      - name: Smoke test on WebKitGTK (sign in, note, image via jess-blob://, search, cold start)
-        run: xvfb-run -a -s "-screen 0 1280x900x24" node apps/tauri/e2e/smoke.mjs target/release/jess-notes-app target/debug/jess
+      # CEF (DESIGN §23.2): build, stage the CEF runtime next to it, then bundle (the second
+      # build is a no-op), and drop the WebKitGTK dependency Tauri's bundler always adds.
+      - name: Build the app on CEF and its .deb / AppImage
+        run: |
+          cargo build --release -p jess-notes-app --features tauri/custom-protocol
+          apps/tauri/cef/stage.sh target/release
+          cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage
+          for d in ../../target/release/bundle/deb/*.deb; do cef/fix-deb.sh "$d"; done
+      # The installed package: its layout, dependencies and AppArmor profile (Ubuntu 24.04
+      # restricts the user namespaces Chromium's sandbox needs) on a stock system.
+      - name: Install the .deb
+        run: sudo apt-get install -y ./target/release/bundle/deb/*.deb
+      - name: Smoke test of the installed app (sign in, note, image via jess-blob://, PDF, search, cold start)
+        run: xvfb-run -a -s "-screen 0 1280x900x24" node apps/tauri/e2e/smoke.mjs /usr/bin/jess-notes-app target/debug/jess
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: linux-smoke-failure
+          path: /tmp/jess-app-e2e-*/*.png
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages

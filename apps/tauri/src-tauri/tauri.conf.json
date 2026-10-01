@@ -42,7 +42,12 @@
     "shortDescription": "Local-first markdown notes",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
     "linux": {
-      "deb": { "depends": [] }
+      "deb": {
+        "depends": ["libnss3", "libgbm1", "libxkbcommon0", "libasound2t64 | libasound2", "libcups2t64 | libcups2", "libatk-bridge2.0-0t64 | libatk-bridge2.0-0", "libxcomposite1", "libxdamage1", "libxrandr2", "libdrm2"],
+        "files": { "/usr/lib/jess-notes/": "../cef/dist/", "/etc/apparmor.d/jess-notes": "../cef/apparmor-profile" },
+        "postInstallScript": "../cef/postinst.sh"
+      },
+      "appimage": { "files": { "/usr/lib/jess-notes/": "../cef/dist/" } }
     }
   }
 }

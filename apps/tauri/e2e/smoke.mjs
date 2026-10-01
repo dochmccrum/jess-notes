@@ -1,11 +1,12 @@
-// Smoke test of the real Linux app on WebKitGTK through tauri-driver (WebDriver):
+// Smoke test of the real Linux app (CEF runtime, DESIGN §23) over the DevTools protocol:
 // sign in, write a note, paste an image (served back through `jess-blob://`), check the server
-// has both, and find the note by full-text search.
+// has both, find the note by full-text search, check the frame rate, and time cold starts.
 //
-//   Xvfb/xvfb-run, WebKitWebDriver (webkit2gtk-driver) and `cargo install tauri-driver` needed.
+//   A display (Xvfb/xvfb-run on CI) and the UI's node_modules (Playwright) needed.
 //   node apps/tauri/e2e/smoke.mjs [path/to/jess-notes-app] [path/to/jess]
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createServer } from 'node:net'
@@ -17,6 +18,7 @@ const jess = resolve(process.argv[3] ?? join(root, 'target/debug/jess'))
 const PASSWORD = 'correct horse battery'
 const tmp = mkdtempSync(join(tmpdir(), 'jess-app-e2e-'))
 const children = []
+const { chromium } = createRequire(join(root, 'ui/package.json'))('@playwright/test')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const freePort = () =>
@@ -65,25 +67,33 @@ function unzip(buf) {
   return out
 }
 
-// ------------------------------------------------------------------ WebDriver (raw HTTP)
-let wd, sid
-async function cmd(method, path, body) {
-  const r = await fetch(`${wd}/session${sid ? `/${sid}` : ''}${path}`, {
-    method,
-    headers: { 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
+// ------------------------------------------------------------------ the app, over CDP
+let proc, browser, page
+/** Launches the app on our data dirs (CEF's cache too) and attaches to its page. */
+async function launch() {
+  const cdp = await freePort()
+  // Its own process group: CEF's helper processes go with it, and CEF ignores SIGTERM.
+  proc = spawn(app, [], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, JESS_CDP_PORT: String(cdp), XDG_DATA_HOME: join(tmp, 'xdg'), XDG_CACHE_HOME: join(tmp, 'cache'), XDG_CONFIG_HOME: join(tmp, 'config') },
   })
-  const j = await r.json()
-  if (!r.ok) throw new Error(`${method} ${path}: ${JSON.stringify(j.value)}`)
-  return j.value
+  browser = await waitFor('DevTools endpoint', () => chromium.connectOverCDP(`http://127.0.0.1:${cdp}`))
+  page = await waitFor('app page', () => browser.contexts()[0]?.pages().find((p) => p.url().startsWith('tauri://')))
 }
-const EL = 'element-6066-11e4-a52e-4f735466cecf'
-const exec = (script, args = []) => cmd('POST', '/execute/sync', { script, args })
-const find = async (css) => (await cmd('POST', '/element', { using: 'css selector', value: css }))[EL]
-const execAsync = (script, args = []) => cmd('POST', '/execute/async', { script, args })
-const type = async (css, text) => cmd('POST', `/element/${await find(css)}/value`, { text })
-const click = async (css) => cmd('POST', `/element/${await find(css)}/click`, {})
-const text = async (css) => cmd('GET', `/element/${await find(css)}/text`)
+/** Closes the window (the app flushes and exits), then makes sure nothing is left. */
+async function quit() {
+  const exited = new Promise((r) => proc.once('exit', r))
+  await page?.close().catch(() => {})
+  await Promise.race([exited, sleep(5000)])
+  try {
+    process.kill(-proc.pid, 'SIGKILL')
+  } catch {}
+  await browser?.close().catch(() => {})
+  proc = browser = page = null
+}
+const text = (css) => page.locator(css).first().innerText()
+const exec = (fn, arg) => page.evaluate(fn, arg)
 
 async function main() {
   // Server.
@@ -96,75 +106,96 @@ async function main() {
   const base = `http://127.0.0.1:${port}`
   await waitFor('server', async () => (await fetch(`${base}/healthz`)).ok)
 
-  // Driver; the app keeps its data under $XDG_DATA_HOME.
-  const wport = await freePort()
-  const drv = spawn('tauri-driver', ['--port', String(wport)], { env: { ...process.env, XDG_DATA_HOME: join(tmp, 'xdg') }, stdio: 'inherit' })
-  children.push(drv)
-  wd = `http://127.0.0.1:${wport}`
-  await waitFor('tauri-driver', async () => (await fetch(`${wd}/status`)).ok)
-  sid = (await cmd('POST', '', { capabilities: { alwaysMatch: { 'tauri:options': { application: app } } } })).sessionId
-
   const started = Date.now()
+  await launch()
+  console.log(`engine: ${await exec(() => navigator.userAgent.match(/Chrome\/[\d.]+/)?.[0])}`)
   // First launch: server address, then password.
-  await waitFor('server step', () => find('[data-testid=server]'))
-  await type('[data-testid=server]', base)
-  await click('button[type=submit]')
-  await waitFor('password step', () => find('[data-testid=password]'))
-  await type('[data-testid=password]', PASSWORD)
+  await page.fill('[data-testid=server]', base)
+  await page.click('button[type=submit]')
+  await page.fill('[data-testid=password]', PASSWORD)
   const signIn = Date.now()
-  await click('button[type=submit]')
+  await page.click('button[type=submit]')
   await waitFor('synced', async () => /Synced/.test(await text('[data-testid=sync-status]')))
   console.log(`launch → synced ${Date.now() - started} ms (sign-in click → synced ${Date.now() - signIn} ms)`)
 
+  // Frame pacing: rAF runs at the display's rate (120 Hz panels must get 120, not WebKitGTK's 60).
+  const fr = await exec(
+    () =>
+      new Promise((res) => {
+        const d = []
+        let last = 0
+        let t0 = 0
+        const f = (t) => {
+          if (last) d.push(t - last)
+          last = t
+          t0 ||= t
+          if (t - t0 < 2000) requestAnimationFrame(f)
+          else res({ fps: d.length / ((t - t0) / 1000), median: d.sort((a, b) => a - b)[d.length >> 1] })
+        }
+        requestAnimationFrame(f)
+      }),
+  )
+  const hz = Number(process.env.SMOKE_HZ ?? 0)
+  console.log(`frames: ${fr.fps.toFixed(1)} fps (median ${fr.median.toFixed(2)} ms)${hz ? `, display ${hz} Hz` : ''}`)
+  if (hz && fr.fps < hz * 0.95) throw new Error(`rAF at ${fr.fps.toFixed(1)} fps on a ${hz} Hz display`)
+
   // A note.
-  await click('[data-testid=new-note]')
-  await waitFor('editor', () => find('.cm-content'))
-  await click('.cm-content')
-  const word = `webkitsmoke${Date.now()}`
-  await type('.cm-content', `Hello from WebKitGTK ${word}`)
+  await page.click('[data-testid=new-note]')
+  await page.waitForSelector('.cm-content')
+  await page.click('.cm-content')
+  const word = `cefsmoke${Date.now()}`
+  await page.keyboard.type(`Hello from CEF ${word}`)
   // An image, pasted: it's ingested natively and rendered from jess-blob://.
-  await execAsync(`
-    const done = arguments[arguments.length - 1]
-    const c = document.createElement('canvas'); c.width = 400; c.height = 300
-    const g = c.getContext('2d'); g.fillStyle = 'teal'; g.fillRect(0, 0, 400, 300)
-    c.toBlob((b) => {
-      const dt = new DataTransfer()
-      dt.items.add(new File([b], 'smoke.png', { type: 'image/png' }))
-      document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
-      done(true)
-    }, 'image/png')`)
+  await exec(
+    () =>
+      new Promise((done) => {
+        const c = document.createElement('canvas')
+        c.width = 400
+        c.height = 300
+        const g = c.getContext('2d')
+        g.fillStyle = 'teal'
+        g.fillRect(0, 0, 400, 300)
+        window.__smokeCanvas = c
+        c.toBlob((b) => {
+          const dt = new DataTransfer()
+          dt.items.add(new File([b], 'smoke.png', { type: 'image/png' }))
+          document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+          done(true)
+        }, 'image/png')
+      }),
+  )
   const src = await waitFor('image rendered', () =>
-    exec(`const i = document.querySelector('.cm-content .jess-img img'); return i && i.complete && i.naturalWidth === 400 ? i.src : null`),
+    exec(() => {
+      const i = document.querySelector('.cm-content .jess-img img')
+      return i && i.complete && i.naturalWidth === 400 ? i.src : null
+    }),
   )
   if (!/^(jess-blob:|http:\/\/jess-blob\.localhost)/.test(src)) throw new Error(`image not served by jess-blob: ${src}`)
   console.log(`image served from ${src.slice(0, 40)}…`)
-  // A HEIC file (kept byte-for-byte on non-Apple devices): WebKitGTK can't decode it, so the
-  // embed must show the HEIC fallback rather than a broken image.
-  await execAsync(`
-    const done = arguments[arguments.length - 1]
+  // A HEIC file (kept byte-for-byte on non-Apple devices): Chromium can't decode it, so the embed
+  // must show the HEIC fallback rather than a broken image.
+  await exec(() => {
     const bytes = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99, 0, 0, 0, 0, 109, 105, 102, 49, 104, 101, 105, 99])
     const dt = new DataTransfer()
     dt.items.add(new File([bytes], 'photo.heic', { type: 'image/heic' }))
     document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
-    done(true)`)
-  await waitFor('HEIC fallback', () => exec(`return !!document.querySelector('.jess-img-placeholder.unsupported')`))
+  })
+  await waitFor('HEIC fallback', () => exec(() => !!document.querySelector('.jess-img-placeholder.unsupported')))
   console.log('HEIC shows its fallback')
-  // A PDF: pasted, then opened in the viewer (PDF.js on WebKitGTK, bytes over the blob channel).
+  // A PDF: pasted, then opened in the viewer (PDF.js, bytes over the blob channel).
   const pdf = [...readFileSync(join(root, 'tests/fixtures/vault/Docs/Paper.pdf'))]
-  await execAsync(`
-    const done = arguments[arguments.length - 1]
+  await exec((bytes) => {
     const dt = new DataTransfer()
-    dt.items.add(new File([new Uint8Array(arguments[0])], 'Smoke paper.pdf', { type: 'application/pdf' }))
+    dt.items.add(new File([new Uint8Array(bytes)], 'Smoke paper.pdf', { type: 'application/pdf' }))
     document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
-    done(true)`, [pdf])
+  }, pdf)
   await sleep(500)
-  await cmd('POST', '/actions', { actions: [{ type: 'key', id: 'kb', actions: [{ type: 'keyDown', value: '\uE009' }, { type: 'keyDown', value: 'o' }, { type: 'keyUp', value: 'o' }, { type: 'keyUp', value: '\uE009' }] }] })
-  await waitFor('quick switcher', () => exec(`return document.activeElement?.placeholder?.startsWith('Find or create') ?? false`))
-  const input = (await cmd('GET', '/element/active'))[EL]
-  await cmd('POST', `/element/${input}/value`, { text: 'Smoke paper' })
-  await waitFor('switcher hit', () => exec(`return [...document.querySelectorAll('[role=option]')].some((o) => o.textContent.includes('Smoke paper.pdf'))`))
-  await cmd('POST', `/element/${input}/value`, { text: '\uE007' })
-  const firstPage = await waitFor('PDF first page', () => exec(`return performance.getEntriesByName('pdf-first-page').at(-1)?.duration ?? null`), 20_000)
+  await page.keyboard.press('Control+o')
+  await waitFor('quick switcher', () => exec(() => document.activeElement?.placeholder?.startsWith('Find or create') ?? false))
+  await page.keyboard.type('Smoke paper')
+  await waitFor('switcher hit', () => exec(() => [...document.querySelectorAll('[role=option]')].some((o) => o.textContent.includes('Smoke paper.pdf'))))
+  await page.keyboard.press('Enter')
+  const firstPage = await waitFor('PDF first page', () => exec(() => performance.getEntriesByName('pdf-first-page').at(-1)?.duration ?? null), 20_000)
   console.log(`PDF first page in ${firstPage.toFixed(0)} ms`)
   await waitFor('synced after edits', async () => /Synced/.test(await text('[data-testid=sync-status]')) && !/Uploading/.test(await text('footer')), 30_000)
 
@@ -177,40 +208,38 @@ async function main() {
   if (!files.has('smoke.png') && ![...files.keys()].some((k) => k.endsWith('/smoke.png'))) throw new Error('image not on the server')
 
   // Full-text search (native SQLite FTS).
-  await click('[role=tab]:nth-child(2)')
-  await type('[aria-label="Search notes"]', word)
+  await page.click('[role=tab]:nth-child(2)')
+  await page.fill('[aria-label="Search notes"]', word)
   await waitFor('search hit', async () => (await text('aside')).includes('Untitled'), 10_000)
 
   // Cold start: relaunch on the same data (the boot record is written 2 s after the last change).
-  await click('[role=tab]:nth-child(1)')
+  await page.click('[role=tab]:nth-child(1)')
   // Back to the note (the PDF was opened last), so the relaunch restores the note.
-  await exec(`[...document.querySelectorAll('[data-testid=tree] [data-id]')].find((r) => r.textContent.trim() === 'Untitled')?.click()`)
+  await exec(() => [...document.querySelectorAll('[data-testid=tree] [data-id]')].find((r) => r.textContent.trim() === 'Untitled')?.click())
   await waitFor('note reopened', async () => (await text('.cm-content')).includes(word))
   await sleep(2500)
-  await cmd('DELETE', '')
-  sid = null
+  await quit()
   const samples = []
   for (let i = 0; i < 3; i++) {
-    sid = (await cmd('POST', '', { capabilities: { alwaysMatch: { 'tauri:options': { application: app } } } })).sessionId
+    await launch()
     await waitFor('editor after relaunch', async () => (await text('.cm-content')).includes(word))
-    samples.push(await exec(`return performance.getEntriesByName('note-visible')[0]?.startTime ?? -1`))
+    samples.push(await exec(() => performance.getEntriesByName('note-visible')[0]?.startTime ?? -1))
     if (process.env.SMOKE_TIMINGS && i === 2) {
-      const t = await exec(`const n = performance.getEntriesByType('navigation')[0]; return JSON.stringify({ nav: n && { resEnd: n.responseEnd, domInteractive: n.domInteractive, dcl: n.domContentLoadedEventEnd }, marks: performance.getEntriesByType('mark').map((m) => [m.name, Math.round(m.startTime)]), measures: performance.getEntriesByType('measure').map((m) => [m.name, Math.round(m.startTime), Math.round(m.duration)]), res: performance.getEntriesByType('resource').map((r) => [r.name.split('/').pop(), Math.round(r.startTime), Math.round(r.responseEnd)]) })`)
+      const t = await exec(() => {
+        const n = performance.getEntriesByType('navigation')[0]
+        return JSON.stringify({ nav: n && { resEnd: n.responseEnd, domInteractive: n.domInteractive, dcl: n.domContentLoadedEventEnd }, marks: performance.getEntriesByType('mark').map((m) => [m.name, Math.round(m.startTime)]), measures: performance.getEntriesByType('measure').map((m) => [m.name, Math.round(m.startTime), Math.round(m.duration)]), res: performance.getEntriesByType('resource').map((r) => [r.name.split('/').pop(), Math.round(r.startTime), Math.round(r.responseEnd)]) })
+      })
       console.log(t)
     }
-    if (i < 2) {
-      await cmd('DELETE', '')
-      sid = null
-    }
+    if (i < 2) await quit()
   }
-  console.log(`cold start → note visible: ${samples.map((x) => x.toFixed(0)).join(', ')} ms (WebKitGTK, ${/release/.test(app) ? 'release' : 'debug'} build)`)
+  console.log(`cold start → note visible: ${samples.map((x) => x.toFixed(0)).join(', ')} ms (CEF, ${/target\/debug\//.test(app) ? 'debug' : 'release'} build)`)
   if (Math.min(...samples) <= 0) throw new Error('no note-visible mark after relaunch')
 
-  const png = await cmd('GET', '/screenshot')
   const out = join(tmp, 'app.png')
-  writeFileSync(out, Buffer.from(png, 'base64'))
+  await page.screenshot({ path: out })
   console.log(`OK — screenshot: ${out}`)
-  await cmd('DELETE', '')
+  await quit()
 }
 
 main()
@@ -218,11 +247,12 @@ main()
   .catch(async (e) => {
     console.error('FAILED:', e.message)
     try {
-      writeFileSync(join(tmp, 'fail.png'), Buffer.from(await cmd('GET', '/screenshot'), 'base64'))
+      await page.screenshot({ path: join(tmp, 'fail.png') })
       console.error(`screenshot: ${join(tmp, 'fail.png')}`)
     } catch {}
     process.exitCode = 1
   })
-  .finally(() => {
+  .finally(async () => {
+    if (proc) await quit()
     for (const c of children) c.kill()
   })

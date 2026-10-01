@@ -13,9 +13,17 @@
   let q = $state('')
   let confirming = $state(false)
 
+  // Recounted when entries change and when note text has been indexed: on a device still catching
+  // up, notes whose text arrives after the panel opened would otherwise leave their attachments
+  // marked unused (and offered for the trash).
+  let asked = 0
   $effect(() => {
     void app.version
-    void app.backend.attachmentRefs().then((r) => (refs = r))
+    void app.indexVersion
+    const n = ++asked
+    void app.backend.attachmentRefs().then((r) => {
+      if (n === asked) refs = r
+    })
   })
 
   const all = $derived.by(() => {
