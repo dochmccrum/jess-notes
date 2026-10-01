@@ -192,6 +192,11 @@ jobs:
             adb install -r apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
             node apps/tauri/e2e/android-smoke.mjs target/debug/jess
       - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-smoke-failure
+          path: /tmp/jess-android-e2e-*/*.png
+      - uses: actions/upload-artifact@v4
         with:
           name: android-packages
           path: |

@@ -188,8 +188,16 @@ async function main() {
   // pads the content view by the IME inset) so the caret stays visible.
   const full = await page.evaluate(() => screen.height)
   const [w, h] = adb('shell', 'wm', 'size').split(': ').pop().split('x').map(Number)
-  adb('shell', 'input', 'tap', String(Math.round(w / 2)), String(Math.round(h * 0.2)))
-  await page.waitForFunction(() => innerHeight < screen.height * 0.7, null, { timeout: 10_000 })
+  // A freshly booted CI emulator sometimes ignores the first tap (its keyboard is still starting).
+  for (let tries = 1; ; tries++) {
+    adb('shell', 'input', 'tap', String(Math.round(w / 2)), String(Math.round(h * 0.2)))
+    try {
+      await page.waitForFunction(() => innerHeight < screen.height * 0.7, null, { timeout: 8_000 })
+      break
+    } catch (e) {
+      if (tries === 3) throw e
+    }
+  }
   await page.keyboard.press('Control+End')
   await page.keyboard.type(' typed with the keyboard up')
   const kb = await page.evaluate(() => ({ h: innerHeight, caret: document.querySelector('.cm-cursor')?.getBoundingClientRect().bottom ?? 0 }))
