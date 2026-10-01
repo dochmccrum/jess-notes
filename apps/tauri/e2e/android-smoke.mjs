@@ -25,7 +25,16 @@ const children = []
 let device
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim()
+// Synchronous, so it blocks Playwright's own timeouts: a hung adb call (e.g. `am start -W` waiting
+// for a first frame a glitched emulator never draws) must fail by itself.
+const adb = (...args) => {
+  try {
+    return execFileSync('adb', args, { encoding: 'utf8', timeout: 60_000 }).trim()
+  } catch (e) {
+    if (e.code === 'ETIMEDOUT') throw new Error(`adb ${args.join(' ')}: no answer in 60 s`)
+    throw e
+  }
+}
 const freePort = () =>
   new Promise((r) => {
     const s = createServer().listen(0, () => {
@@ -315,7 +324,7 @@ async function main() {
   console.log(`cold start → note visible: ${samples.map((s) => s.total.toFixed(0)).join(', ')} ms from launch (WebView navigation → note ${samples.map((s) => s.nav.toFixed(0)).join(', ')} ms; first frame ${samples.map((s) => s.first).join(', ')} ms)`)
 
   const shot = join(tmp, 'app.png')
-  writeFileSync(shot, execFileSync('adb', ['exec-out', 'screencap', '-p']))
+  writeFileSync(shot, execFileSync('adb', ['exec-out', 'screencap', '-p'], { timeout: 60_000 }))
   console.log(`OK — screenshot: ${shot}`)
 }
 
@@ -324,7 +333,7 @@ main()
   .catch((e) => {
     console.error('FAILED:', e.message)
     try {
-      writeFileSync(join(tmp, 'fail.png'), execFileSync('adb', ['exec-out', 'screencap', '-p']))
+      writeFileSync(join(tmp, 'fail.png'), execFileSync('adb', ['exec-out', 'screencap', '-p'], { timeout: 60_000 }))
       console.error(`screenshot: ${join(tmp, 'fail.png')}`)
     } catch {}
     process.exitCode = 1
