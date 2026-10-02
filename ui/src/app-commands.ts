@@ -37,6 +37,7 @@ export function registerCommands(app: AppState) {
     },
   })
   register({ id: 'switcher', title: 'Quick switcher', run: () => toggleOverlay('switcher') })
+  register({ id: 'spaces', title: 'Spaces: switch, add, or move to a server…', when: () => !!app.space, run: () => toggleOverlay('spaces') })
   register({ id: 'palette', title: 'Command palette', hidden: true, run: () => toggleOverlay('palette') })
   register({ id: 'settings', title: 'Open settings', run: () => toggleOverlay('settings') })
   register({ id: 'trash.open', title: 'Open trash', run: () => toggleOverlay('trash') })

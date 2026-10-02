@@ -47,7 +47,7 @@
         "files": { "/usr/lib/jess-notes/": "../cef/dist/", "/etc/apparmor.d/jess-notes": "../cef/apparmor-profile" },
         "postInstallScript": "../cef/postinst.sh"
       },
-      "appimage": { "files": { "/usr/lib/jess-notes/": "../cef/dist/" } }
+      "appimage": { "files": { "/usr/lib/": "../cef/dist/" } }
     }
   }
 }

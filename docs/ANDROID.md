@@ -66,6 +66,15 @@ node apps/tauri/e2e/android-smoke.mjs target/debug/jess
 The server runs on the host and is reached through `adb reverse`. CI runs the same script on an
 API 33 emulator.
 
+### Spaces (DESIGN §24)
+
+A fresh install opens on the spaces welcome screen; the smoke test creates a local space (the
+server embedded in the app), then adds the test server as a remote space. Adding, switching and
+erasing restart the app through `RestartActivity` (a separate `:restart` process starts
+`MainActivity` again), so the test re-attaches to the new process's WebView after each.
+Scanning a pairing QR code needs a real camera: on a phone, open Settings → Pair a device on a
+signed-in device (any platform) and scan it from Add a space → On a Jess server.
+
 ### 120 Hz (DESIGN §23.4)
 
 The app asks for the display's fastest mode, and the smoke test logs the WebView's frame rate.

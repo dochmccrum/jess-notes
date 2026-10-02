@@ -20,6 +20,11 @@ futures-util = "0.3"
 ureq = { version = "3", features = ["json"] }
 rand = "0.8"
 tracing = "0.1"
+# Spaces (DESIGN §24): local spaces run the real server in-process. The apps enable this.
+jess-server = { path = "../../server", optional = true }
+
+[features]
+spaces = ["dep:jess-server"]
 
 [dev-dependencies]
 jess-server = { path = "../../server" }

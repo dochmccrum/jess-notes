@@ -1,14 +1,14 @@
 // "Erase this device's local copy" (Settings): wipes IndexedDB (notes, queue, blobs, token) and
 // OPFS (search index) on the next load, before anything opens them. Device settings are kept.
 import { DB_NAME } from '../worker/idb'
-import { isTauri, tauriInvoke } from './platform'
+import { androidRestart, isTauri, tauriInvoke } from './platform'
 
 const FLAG = 'jess.erase'
 
 export function requestErase() {
   if (isTauri) {
     // The native stores are open in the app process: it erases them on its next start.
-    void tauriInvoke('request_erase')
+    void tauriInvoke('request_erase').then(androidRestart)
     return
   }
   localStorage.setItem(FLAG, '1')

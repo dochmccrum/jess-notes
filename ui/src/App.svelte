@@ -80,6 +80,12 @@
 
 <div class="shell" class:pinned={app.device.sidebarMode === 'pinned'}>
   <Sidebar {app}>
+    {#if app.space}
+      <button class="space-btn" title="Spaces" onclick={() => void run('spaces')} data-testid="space-switcher">
+        <span class="name">{app.space.name}</span>
+        <span class="kind">{app.space.kind === 'local' ? 'on this device' : 'synced'} ▾</span>
+      </button>
+    {/if}
     <div class="sb-head">
       <div class="tabs" role="tablist">
         {#each tabs as [t, label]}
@@ -143,6 +149,10 @@
   {#await import('./components/AttachmentsPanel.svelte') then { default: AttachmentsPanel }}<AttachmentsPanel {app} />{/await}
 {:else if app.overlay === 'trash'}
   {#await import('./components/TrashView.svelte') then { default: TrashView }}<TrashView {app} />{/await}
+{:else if app.overlay === 'spaces'}
+  {#await Promise.all([import('./components/Spaces.svelte'), import('./components/Modal.svelte')]) then [{ default: Spaces }, { default: Modal }]}
+    <Modal title="Spaces" close={() => (app.overlay = null)}><Spaces current={app.space} /></Modal>
+  {/await}
 {:else if app.overlay === 'move' && app.overlayArg}
   <MoveDialog {app} id={app.overlayArg} />
 {/if}
@@ -231,5 +241,32 @@
     display: grid;
     place-content: center;
     text-align: center;
+  }
+  .space-btn {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px 4px;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .space-btn .name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .space-btn .kind {
+    font-size: 12px;
+    color: var(--fg-3);
+    white-space: nowrap;
+  }
+  .space-btn:hover .name {
+    color: var(--accent);
   }
 </style>

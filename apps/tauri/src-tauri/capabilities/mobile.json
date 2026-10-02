@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Android: scanning pairing QR codes with the camera (DESIGN §24.3).",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-cancel",
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions"
+  ]
+}

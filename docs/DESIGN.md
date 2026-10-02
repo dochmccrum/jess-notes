@@ -20,6 +20,7 @@ Status: **approved** (2026-09-29). All decisions D1–D11 accepted as recommende
 | D10 | **First-run setup is protected by a one-time setup code** printed to the server log, unless `JESS_ADMIN_PASSWORD` is set. Without it, whoever reaches a fresh public server first owns it. | Yes | §14 |
 | D11 | **Line endings and BOM are stored verbatim** in the Yjs text. CodeMirror uses `lineSeparator: "\n"` with `\r` hidden, so CRLF and mixed-ending files round-trip byte-for-byte. A `.md` file that isn't valid UTF-8 is stored as a read-only blob-backed note. | Yes | §10.6 |
 | D12 | **120 Hz everywhere (owner requirement, 2026-10-01).** Every interaction keeps up with the display's refresh rate, up to 120 Hz, on every platform. Desktop Linux therefore runs on CEF (Chromium) instead of WebKitGTK, which caps page rendering at 60 Hz; Android and the web already use engines that follow the display. | Owner's call, implemented in phase 6.5 | §23 |
+| D13 | **Spaces (owner requirement, 2026-10-01).** The apps hold several *spaces* (vaults), one open at a time. A *remote* space syncs with a Jess server, as before (added by URL, pairing link or QR code). A *local* space has no remote: the app runs the real Jess server in-process on 127.0.0.1, with its data in the app's data folder, so local and remote spaces share one engine and one set of guarantees (D1–D3). Local spaces exist in the Linux and Android apps; the web app, which is always served by a server, stays remote-only. A local space can be moved to a server later. | Owner's call (embedded server, apps only, move-to-server now, QR show + scan) | §24 |
 
 Everything else is my call. It's recorded below with reasoning, and you can override any of it.
 
@@ -1234,6 +1235,12 @@ rendering, and a forced vblank timer. So the Linux app runs on CEF:
   by its postinst) that lets Chromium's sandbox create user namespaces on Ubuntu 23.10+, which
   restricts them. AppImages can't install a profile; on those systems the sandbox needs the
   distribution's own setting relaxed.
+  The AppImage puts CEF's runtime in its own `usr/lib`: Tauri's AppImage tool (linuxdeploy)
+  rewrites the binary's runpath to `$ORIGIN/../lib` and copies every library it resolves there.
+  With CEF in `usr/lib/jess-notes`, it copied `libcef.so` away from its resources, and CEF
+  aborted at start-up (SIGTRAP). The runpath includes both locations. The AppImage starts slower
+  (cold start → note 365–700 ms against ~175 ms from the deb), because each launch mounts the
+  image and decompresses CEF.
 - **Tests:** the desktop smoke test drives the app over the DevTools protocol (`JESS_CDP_PORT`),
   because WebKitWebDriver/tauri-driver can't drive CEF.
 - **Android** keeps the system WebView (Chromium, through wry): it follows the display's refresh
@@ -1268,4 +1275,55 @@ WebView is Chromium, so it renders at whatever rate the window gets. The system 
 the rate (battery saver, thermal limits), and a fixed preferred mode can stop LTPO panels from
 dropping their idle refresh rate, so that costs some battery. The emulators only offer 60 Hz;
 the 120 Hz check needs a real phone (docs/ANDROID.md).
+
+---
+
+## 24. Spaces (phase 6.6)
+
+The owner wants Jess to work without a remote too (2026-10-01). Choices made with the owner:
+an embedded server, apps only, local spaces movable to a server in this phase, and pairing QR
+codes shown on any signed-in device and scanned on Android.
+
+### 24.1 Model
+
+- **A space** is one vault as seen by this device: `{ id, name, kind: local | remote, server }`.
+  The app keeps a registry (`spaces.json` in the app's data folder) and one directory per space,
+  `spaces/<id>/`, holding the native client's data (`data/`), plus the embedded server's data
+  (`server/`) for a local space. Nothing is shared between spaces. One space is open at a time:
+  switching saves the choice and restarts the app (about 200 ms on desktop), so every store,
+  socket and index belongs to exactly one space and nothing has to be torn down in place.
+- **Remote:** the native client syncs with the space's server, unchanged. It's added by URL plus
+  password, a pairing link, or a scanned pairing QR code. Sign-in happens in the add-space screen,
+  before the space is created, so a typo never leaves an empty space behind.
+- **Local:** at launch the app builds the Jess server for `spaces/<id>/server` and serves it on
+  `127.0.0.1:<random port>`, then points the native client at it. The space's password is a random
+  secret kept in the registry, and the client signs in with it automatically. It's the same server
+  code, so local spaces get the same op validation, link rewriting on rename (Invariant R) and
+  delete/edit rules (D3), and every server test covers them. What's off: the mirror and git
+  (`JESS_MIRROR_ENABLED`/`JESS_GIT_ENABLED` false; a local space is already on the device) and,
+  on Android, attachment derivation (it re-executes the binary, which an APK can't). On Linux the
+  app's `main` answers `jess-notes-app derive …` like `jess derive`, so images get their
+  display/thumb variants (PDF thumbnails and text too, where pdfium is installed). Snapshots stay
+  on: they're a local space's only history. Nothing listens beyond loopback, and pairing is hidden
+  for local spaces.
+- **Web:** unchanged and remote-only; it has no space switcher.
+- **Erase vs delete:** "Erase this device" applies to remote spaces (the server keeps the vault).
+  A local space is the only copy: it offers "Delete space…" instead, behind typing its name.
+
+### 24.2 Moving a local space to a server
+
+"Move to a server…" asks for the server and a password (or a pairing link or QR code), exports
+the space with the existing export engine (portable zip, attachments included), uploads it as a
+blob and runs the server's import on it (merging into whatever the vault already has, keeping
+both on conflicts), then adds a remote space for that server and switches to it. The local space
+is kept and renamed "<name> (moved)" until deleted, because if in doubt we keep both copies.
+What moves is the content (notes, attachments, folders, PDF visibility). Trash, history and
+device-only settings don't.
+
+### 24.3 Pairing QR codes
+
+Settings → "Pair a device" (remote spaces, every platform) shows the pairing link as a QR code,
+generated by `uqr` (a few KB, lazy-loaded). The Android app's add-space screen scans one with the
+camera through Tauri's barcode-scanner plugin (camera permission requested only when scanning).
+Linux takes a pasted link.
 

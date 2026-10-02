@@ -28,6 +28,10 @@
     app.backend.setOfflineMode(app.device.offlineAttachments)
   }
 
+  // A local space has no server other devices can reach (DESIGN §24): no pairing, and it's
+  // deleted from the Spaces dialog rather than erased.
+  const local = $derived(app.space?.kind === 'local')
+
   async function makePair() {
     if (!token) return
     const r = await createPairing(token)
@@ -84,6 +88,13 @@
       </select>
     </label>
   </section>
+  {#if local}
+  <section>
+    <h3>Devices</h3>
+    <p class="small muted">“{app.space?.name}” is stored on this device only. To use it on your other devices, move it to a Jess server.</p>
+    <button class="btn" onclick={() => (app.overlay = 'spaces')} data-testid="settings-spaces">Spaces…</button>
+  </section>
+  {:else}
   <section>
     <h3>Devices</h3>
     <ul class="devices">
@@ -99,8 +110,13 @@
     {#if pair}
       <p class="small">Open this link on the other device within 10 minutes (single use):</p>
       <input type="text" readonly value={pair.link} onclick={(e) => (e.target as HTMLInputElement).select()} class="link" />
+      <p class="small">Or scan it with the Jess app on the other device (Add a space → On a Jess server → Scan):</p>
+      {#await import('uqr') then { renderSVG }}
+        <img class="qr" alt="Pairing QR code" data-testid="pair-qr" src={`data:image/svg+xml;utf8,${encodeURIComponent(renderSVG(pair.link, { border: 2 }))}`} />
+      {/await}
     {/if}
   </section>
+  {/if}
   {#if quarantine.length}
     <section>
       <h3>Rejected changes</h3>
@@ -126,8 +142,10 @@
     <button class="btn" onclick={() => (app.overlay = 'trash')}>Open trash</button>
     <button class="btn" onclick={() => (app.overlay = 'import')}>Import / export…</button>
     <button class="btn" onclick={() => (app.overlay = 'attachments')}>Attachments…</button>
-    <button class="btn danger" onclick={() => void doLogout()}>Log out of this device</button>
-    <button class="btn danger" onclick={() => (erasing = true)} data-testid="erase">Erase this device's local copy…</button>
+    {#if !local}
+      <button class="btn danger" onclick={() => void doLogout()}>Log out of this device</button>
+      <button class="btn danger" onclick={() => (erasing = true)} data-testid="erase">Erase this device's local copy…</button>
+    {/if}
   </section>
   {#if erasing}
     <section class="erase" role="alert">
@@ -206,5 +224,12 @@
   }
   .warn {
     color: var(--danger);
+  }
+  .qr {
+    width: 200px;
+    height: 200px;
+    background: #fff;
+    border-radius: 6px;
+    image-rendering: pixelated;
   }
 </style>

@@ -7,8 +7,9 @@ import { newId } from '../lib/ids'
 import { freeName, nfc, validateName, isMarkdownName } from '../lib/names'
 import type { EntryMeta, MetaIntent } from '../lib/types'
 import { isTouch } from '../lib/platform'
+import type { Space } from '../lib/spaces'
 
-export type Overlay = null | 'switcher' | 'palette' | 'settings' | 'import' | 'trash' | 'move' | 'attachments'
+export type Overlay = null | 'switcher' | 'palette' | 'settings' | 'import' | 'trash' | 'move' | 'attachments' | 'spaces'
 
 export interface PromptReq {
   title: string
@@ -28,6 +29,8 @@ let toastSeq = 0
 
 export class AppState {
   device: DeviceSettings = $state(loadDevice())
+  /** The open space (apps, DESIGN §24); null on the web. */
+  space: Space | null = $state(null)
   active: string | null = $state(null)
   overlay: Overlay = $state(null)
   overlayArg: string | null = $state(null)

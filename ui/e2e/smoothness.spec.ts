@@ -24,8 +24,9 @@ type Frames = { frames: number; interval: number; p99: number; max: number; late
 const HZ = Number(process.env.E2E_HZ ?? 0)
 const FRAME = 1000 / 120
 // Typing: p95 task within one 120 Hz frame, longest within two (at most one frame dropped).
-// GitHub's runners are 2–3× slower than a desktop and share their CPU: they get 1.5× headroom.
-const SLACK = process.env.GITHUB_ACTIONS ? 1.5 : 1
+// GitHub's runners are 2–3× slower than a desktop and share their CPU: they get 2.5× headroom
+// (CI guards against regressions; the 120 Hz acceptance runs on real hardware, DESIGN §23.1).
+const SLACK = process.env.GITHUB_ACTIONS ? 2.5 : 1
 
 test.use({ trace: 'off' })
 

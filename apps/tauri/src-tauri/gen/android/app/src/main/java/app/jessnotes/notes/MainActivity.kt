@@ -3,6 +3,7 @@ package app.jessnotes.notes
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -44,6 +45,14 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onWebViewCreate(webView: WebView) {
+    // `window.JessAndroid.restart()`: the UI restarts the app after a space switch or an erase
+    // (Tauri's own restart re-executes a binary, which an APK doesn't have).
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
+      fun restart() {
+        runOnUiThread { RestartActivity.restart(this@MainActivity) }
+      }
+    }, "JessAndroid")
     // Back gesture: the UI closes whatever is open (prompt, viewer, dialog, drawer) and says
     // whether it did; otherwise the app goes to the background like a home press, so coming back
     // is a warm resume rather than a cold start. Posted so it's registered after the Tauri app

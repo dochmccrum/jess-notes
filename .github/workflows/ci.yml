@@ -29,6 +29,9 @@ jobs:
       # The Tauri shell needs WebKitGTK and the built UI: it has its own job below.
       - run: cargo clippy --workspace --exclude jess-notes-app --all-targets -- -D warnings
       - run: cargo test --workspace --exclude jess-notes-app
+      # Spaces (DESIGN §24): the embedded server in jess-native, behind the feature the apps enable.
+      - run: cargo clippy -p jess-native --features spaces --all-targets -- -D warnings
+      - run: cargo test -p jess-native --features spaces --test spaces
       - run: cargo build -p jess-core-wasm --target wasm32-unknown-unknown --release
       - name: Crash tests (more iterations)
         run: CRASH_ITERS=20 cargo test -p jess-server --test crash
@@ -105,7 +108,15 @@ jobs:
 
   linux-app:
     runs-on: ubuntu-24.04
+    env:
+      # One CEF download for the debug (clippy) and release builds (DESIGN §23.2).
+      CEF_PATH: /home/runner/cef
     steps:
+      - name: Free disk space (CEF unpacks ~1.4 GB per build profile, plus the packages)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/android
+          sudo docker image prune --all --force > /dev/null
+          df -h /
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93
         with:
@@ -139,6 +150,10 @@ jobs:
         run: sudo apt-get install -y ./target/release/bundle/deb/*.deb
       - name: Smoke test of the installed app (sign in, note, image via jess-blob://, PDF, search, cold start)
         run: xvfb-run -a -s "-screen 0 1280x900x24" node apps/tauri/e2e/smoke.mjs /usr/bin/jess-notes-app target/debug/jess
+      # The AppImage lays CEF out differently (linuxdeploy owns usr/lib): run it too. No FUSE 2 on
+      # the runners, so it extracts itself instead of mounting.
+      - name: Smoke test of the AppImage
+        run: APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a -s "-screen 0 1280x900x24" node apps/tauri/e2e/smoke.mjs target/release/bundle/appimage/*.AppImage target/debug/jess
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

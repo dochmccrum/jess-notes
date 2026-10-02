@@ -10,6 +10,8 @@
 pub mod blobfiles;
 pub mod index;
 pub mod io;
+#[cfg(feature = "spaces")]
+pub mod spaces;
 pub mod store;
 mod transport;
 

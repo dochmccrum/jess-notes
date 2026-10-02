@@ -144,6 +144,41 @@ function launch() {
   return { at: Number(out.split('\n')[0]), total: Number(/TotalTime: (\d+)/.exec(out)?.[1] ?? NaN) }
 }
 
+/**
+ * Runs `action`, which restarts the app into another space (DESIGN §24: MainActivity restarts it
+ * from a separate process), then waits for the new process and attaches to its WebView.
+ */
+async function restarting(action) {
+  const pid = () => {
+    try {
+      return adb('shell', 'pidof', PKG)
+    } catch {
+      return ''
+    }
+  }
+  const before = pid()
+  await action()
+  await waitFor('the app to restart', () => {
+    const now = pid()
+    return now && now !== before
+  }, 30_000)
+  await detach()
+  // Attach only once the new MainActivity is on screen (its WebView's DevTools socket exists by
+  // then), so Playwright can't latch onto the old process's socket.
+  await waitFor('the restarted activity', () => /ResumedActivity.*app\.jessnotes\.notes\/\.MainActivity/.test(adb('shell', 'dumpsys', 'activity', 'activities')), 30_000)
+  const page = await waitFor(
+    'the restarted WebView',
+    async () => {
+      const p = await attach()
+      if (await p.evaluate(() => !!document.querySelector('#app > *')).catch(() => false)) return p
+      await detach()
+      return null
+    },
+    60_000,
+  )
+  return page
+}
+
 async function detach() {
   await device?.close().catch(() => {})
   device = null
@@ -199,12 +234,30 @@ async function main() {
   const hz = Number(process.env.SMOKE_HZ ?? 0)
   if (hz && fps < hz * 0.95) throw new Error(`rAF at ${fps.toFixed(1)} fps on a ${hz} Hz display`)
 
-  // First launch: server address, then password.
-  await page.fill('[data-testid=server]', base)
-  await page.click('button[type=submit]')
-  await page.fill('[data-testid=password]', PASSWORD)
-  await page.click('button[type=submit]')
-  await page.waitForFunction(() => /Synced/.test(document.querySelector('[data-testid=sync-status]')?.textContent ?? ''), null, { timeout: 30_000 })
+  // A fresh install asks where notes live (DESIGN §24). First a local space: the real server,
+  // embedded in the app on 127.0.0.1.
+  const synced = (p) => p.waitForFunction(() => /Synced/.test(document.querySelector('[data-testid=sync-status]')?.textContent ?? ''), null, { timeout: 30_000 })
+  await page.waitForSelector('[data-testid=spaces-welcome]')
+  await page.click('[data-testid=choose-local]')
+  await page.fill('[data-testid=space-name]', 'Phone notes')
+  page = await restarting(() => page.click('[data-testid=space-local-submit]'))
+  await synced(page)
+  await openDrawer(page)
+  await page.click('[data-testid=new-note]')
+  await page.waitForSelector('.cm-content')
+  await page.click('.cm-content')
+  await page.keyboard.type('Written in a local space on Android')
+  await synced(page)
+  console.log('local space: embedded server running, note committed')
+
+  // Then the test server, added as a remote space.
+  await openDrawer(page)
+  await page.click('[data-testid=space-switcher]')
+  await page.click('[data-testid=add-remote]')
+  await page.fill('[data-testid=space-server]', base)
+  await page.fill('[data-testid=space-password]', PASSWORD)
+  page = await restarting(() => page.click('[data-testid=space-remote-submit]'))
+  await synced(page)
 
   // A note, typed through the on-screen keyboard's input path.
   await openDrawer(page)

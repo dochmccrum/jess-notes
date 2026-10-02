@@ -21,6 +21,21 @@ fn argon() -> Argon2<'static> {
     )
 }
 
+/// For a high-entropy random secret rather than a password (a local space's, DESIGN §24.1):
+/// a slow KDF protects guessable passwords, and 192 random bits aren't guessable, so the
+/// cheapest Argon2id parameters do. Verification reads the parameters from the stored hash.
+pub fn hash_random_secret(secret: &str) -> String {
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        Params::new(Params::MIN_M_COST.max(8), 1, 1, None).expect("params"),
+    )
+    .hash_password(secret.as_bytes(), &salt)
+    .expect("argon2")
+    .to_string()
+}
+
 pub fn hash_password(pw: &str) -> String {
     let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     argon()
@@ -221,6 +236,17 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn random_secrets_hash_cheaply_and_verify_through_the_normal_path() {
+        let phc = hash_random_secret("ca71bc6b531bf53a5e27f32f787d7751acf0377219bcca90");
+        // The parameters travel in the hash: verification needs no special case.
+        assert!(phc.contains("m=8,t=1,p=1"), "{phc}");
+        assert!(verify_password(
+            "ca71bc6b531bf53a5e27f32f787d7751acf0377219bcca90",
+            &phc
+        ));
+        assert!(!verify_password("wrong", &phc));
+    }
     #[test]
     fn rate_limit() {
         let mut r = RateLimiter::default();

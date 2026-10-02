@@ -24,6 +24,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Restarts the app from a separate process (switching spaces, erasing; RestartActivity.kt). -->
+        <activity
+            android:name=".RestartActivity"
+            android:process=":restart"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

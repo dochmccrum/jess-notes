@@ -23,6 +23,9 @@ pub struct Config {
     pub trust_proxy: bool,
     /// Login/setup/redeem attempts per IP per minute (DESIGN §14: 5).
     pub login_per_minute: u64,
+    /// `admin_password` is a random secret, not a person's password (an app's local space,
+    /// DESIGN §24.1): it's hashed with the cheapest KDF parameters.
+    pub random_secret: bool,
 }
 
 fn env_bool(k: &str, d: bool) -> bool {
@@ -79,6 +82,7 @@ impl Config {
             trash_retention_days: env_u64("JESS_TRASH_RETENTION_DAYS", 30),
             trust_proxy: env_bool("JESS_TRUST_PROXY", true),
             login_per_minute: env_u64("JESS_LOGIN_RATE_PER_MINUTE", 5),
+            random_secret: false,
         }
     }
 

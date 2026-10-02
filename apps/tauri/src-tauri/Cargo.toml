@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "~2.6", features = [] }
 
 [dependencies]
-jess-native = { path = "../../native" }
+jess-native = { path = "../../native", features = ["spaces"] }
 # No asset compression: the UI is served from memory as-is (brotli-decoding every script at
 # launch cost cold-start time; the binary grows by a few MB).
 tauri = { version = "~2.11", default-features = false, features = ["common-controls-v6", "dynamic-acl", "dbus"] }
@@ -31,8 +31,14 @@ base64 = "0.22"
 # branch to published Tauri 2, pinned to a reviewed commit. The CEF binaries come from the `cef`
 # crate's build script; packaging copies them next to the app (scripts in apps/tauri/cef/).
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
+# Relaunching closes inherited descriptors (`close_range`): see `relaunch` in lib.rs.
+libc = "0.2"
 tauri-runtime-cef = { git = "https://github.com/SableClient/tauri-runtime-cef", rev = "6568170ae5fb27b38dae1e367f0bb3a09a040152" }
 
 # Everywhere else, the system WebView through wry (Android: Chromium, so 120 Hz where the display is).
 [target.'cfg(not(all(target_os = "linux", not(target_os = "android"))))'.dependencies]
 tauri = { version = "~2.11", default-features = false, features = ["wry", "common-controls-v6", "dynamic-acl", "dbus"] }
+
+# Scanning pairing QR codes with the camera (DESIGN §24.3). 2.4.4 is the last release for Tauri 2.11.
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-barcode-scanner = "~2.4.4"

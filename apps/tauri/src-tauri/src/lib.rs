@@ -2,6 +2,7 @@
 //! core as the web worker with SQLite, file blobs and a Rust transport. Command names and payload
 //! shapes mirror `ui/src/backend/tauri.ts`. Binary payloads (doc updates, blob bytes) travel as
 //! raw IPC bodies. `<img>`/PDF bytes are served by the `jess-blob` URI scheme (§7.7).
+use jess_native::spaces::{self, Kind, Registry};
 use jess_native::{io::Source, EventSink, Native};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -13,6 +14,9 @@ use tauri::{Manager, State};
 
 type Events = Arc<Mutex<Option<Channel<Value>>>>;
 
+/// The app's identifier (tauri.conf.json): CEF's profile lives under it.
+pub const APP_ID: &str = "app.jessnotes.notes";
+
 /// Desktop Linux runs on CEF (120 Hz, DESIGN §23); elsewhere the system WebView through wry.
 #[cfg(all(target_os = "linux", not(target_os = "android")))]
 pub type Rt = tauri_runtime_cef::CefRuntime<tauri::EventLoopMessage>;
@@ -21,10 +25,23 @@ pub type Rt = tauri::Wry;
 type AppHandle = tauri::AppHandle<Rt>;
 
 struct App {
-    native: Native,
+    /// The open space's client, if a space is open (a fresh install has none yet).
+    native: Option<Native>,
     events: Events,
-    /// The app's data directory; `ERASE` next to it asks the next launch to wipe it.
+    /// The app's data directory: `spaces.json` and `spaces/<id>/` (DESIGN §24).
     root: PathBuf,
+    /// The open space (public fields only).
+    space: Option<Value>,
+    /// A local space's embedded server, stopped when the app exits.
+    _embedded: Option<spaces::Embedded>,
+}
+
+impl App {
+    fn n(&self) -> Result<&Native, String> {
+        self.native
+            .as_ref()
+            .ok_or_else(|| "no space is open".to_string())
+    }
 }
 
 /// Runs blocking work (HTTP, disk-heavy import/export) off the IPC and GUI threads.
@@ -80,40 +97,43 @@ fn header_str(req: &Request<'_>, name: &str) -> String {
 // ------------------------------------------------------------------ session
 
 #[tauri::command]
-fn init(on_event: Channel<Value>, app: State<'_, App>) -> Value {
+fn init(on_event: Channel<Value>, app: State<'_, App>) -> Result<Value, String> {
     // The channel first: nothing emitted after the snapshot below can be lost.
     *app.events.lock().expect("lock") = Some(on_event);
-    app.native.init()
+    Ok(app.n()?.init())
 }
 
 #[tauri::command]
 fn get_server(app: State<'_, App>) -> Option<String> {
-    app.native.server()
+    app.native.as_ref().and_then(Native::server)
 }
 
 #[tauri::command]
-fn set_server(url: Option<String>, app: State<'_, App>) {
-    app.native.set_server(url)
+fn set_server(url: Option<String>, app: State<'_, App>) -> Result<(), String> {
+    app.n()?.set_server(url);
+    Ok(())
 }
 
 #[tauri::command]
 fn get_token(app: State<'_, App>) -> Option<String> {
-    app.native.token()
+    app.native.as_ref().and_then(Native::token)
 }
 
 #[tauri::command]
-fn set_token(token: Option<String>, app: State<'_, App>) {
-    app.native.set_token(token)
+fn set_token(token: Option<String>, app: State<'_, App>) -> Result<(), String> {
+    app.n()?.set_token(token);
+    Ok(())
 }
 
 #[tauri::command]
 fn meta_get(key: String, app: State<'_, App>) -> Option<String> {
-    app.native.meta_get(&format!("ui:{key}"))
+    app.native.as_ref()?.meta_get(&format!("ui:{key}"))
 }
 
 #[tauri::command]
-fn meta_put(key: String, value: Option<String>, app: State<'_, App>) {
-    app.native.meta_put(&format!("ui:{key}"), value.as_deref())
+fn meta_put(key: String, value: Option<String>, app: State<'_, App>) -> Result<(), String> {
+    app.n()?.meta_put(&format!("ui:{key}"), value.as_deref());
+    Ok(())
 }
 
 #[tauri::command]
@@ -124,93 +144,290 @@ async fn http_json(
     auth: bool,
     app: State<'_, App>,
 ) -> Result<(u16, Value), String> {
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     blocking(move || n.http_json(&method, &path, body, auth)).await
 }
 
 #[tauri::command]
-fn quarantine(app: State<'_, App>) -> Value {
-    app.native.quarantine()
+fn quarantine(app: State<'_, App>) -> Result<Value, String> {
+    Ok(app.n()?.quarantine())
 }
 
 #[tauri::command]
 fn set_foreground(foreground: bool, app: State<'_, App>) {
-    app.native.set_foreground(foreground)
+    if let Some(n) = &app.native {
+        n.set_foreground(foreground)
+    }
 }
 
 #[tauri::command]
 fn online(app: State<'_, App>) {
-    app.native.online()
+    if let Some(n) = &app.native {
+        n.online()
+    }
 }
 
 #[tauri::command]
 fn intent(ops: String, app: State<'_, App>) -> Result<(), String> {
-    app.native.intent(&ops)
+    app.n()?.intent(&ops)
 }
 
 /// Erasing local data (Settings → "Erase this device"): the stores are open, so the wipe happens
 /// at the next launch, before anything opens them.
 #[tauri::command]
 fn request_erase(app: State<'_, App>, handle: AppHandle) -> Result<(), String> {
-    app.native.flush();
-    std::fs::write(app.root.join("ERASE"), b"1").map_err(|e| e.to_string())?;
+    let space = app.space.as_ref().ok_or("no space is open")?;
+    // A local space is the only copy: it's deleted (from another space), never "erased".
+    if space["kind"] == "local" {
+        return Err("a local space can't be erased: delete it from the spaces list".into());
+    }
+    let id = space["id"].as_str().unwrap_or_default();
+    app.n()?.flush();
+    std::fs::write(spaces::space_dir(&app.root, id).join("ERASE"), b"1")
+        .map_err(|e| e.to_string())?;
+    relaunch(&handle);
+    Ok(())
+}
+
+// ------------------------------------------------------------------ spaces (DESIGN §24)
+
+/// The open space, or null.
+#[tauri::command]
+fn space_current(app: State<'_, App>) -> Option<Value> {
+    app.space.clone()
+}
+
+#[tauri::command]
+fn spaces_list(app: State<'_, App>) -> Result<Value, String> {
+    Ok(Registry::load(&app.root)?.public())
+}
+
+/// Adds a local space and opens it (the app restarts into it).
+#[tauri::command]
+fn space_add_local(name: String, app: State<'_, App>, handle: AppHandle) -> Result<(), String> {
+    let mut reg = Registry::load(&app.root)?;
+    let id = reg.add(&app.root, &name, Kind::Local)?.id.clone();
+    reg.active = Some(id);
+    reg.save(&app.root)?;
+    switch_away(&app);
+    relaunch(&handle);
+    Ok(())
+}
+
+/// Signs in to a server (password, or the code in a pairing link), then adds the space and opens
+/// it. Signing in first means a typo never leaves an empty space behind.
+#[tauri::command]
+async fn space_add_remote(
+    name: Option<String>,
+    server: String,
+    password: Option<String>,
+    device_name: String,
+    app: State<'_, App>,
+    handle: AppHandle,
+) -> Result<(), String> {
+    let (base, code) = spaces::parse_server(&server)?;
+    let b = base.clone();
+    let token =
+        blocking(move || spaces::sign_in(&b, password.as_deref(), code.as_deref(), &device_name))
+            .await?;
+    let mut reg = Registry::load(&app.root)?;
+    let host = base.split("://").nth(1).unwrap_or(&base).to_string();
+    let s = reg.add(&app.root, name.as_deref().unwrap_or(&host), Kind::Remote)?;
+    s.server = Some(base);
+    s.pending_token = Some(token);
+    let id = s.id.clone();
+    reg.active = Some(id);
+    reg.save(&app.root)?;
+    switch_away(&app);
+    relaunch(&handle);
+    Ok(())
+}
+
+#[tauri::command]
+fn space_switch(id: String, app: State<'_, App>, handle: AppHandle) -> Result<(), String> {
+    let mut reg = Registry::load(&app.root)?;
+    reg.get(&id).ok_or("no such space")?;
+    if reg.active.as_deref() == Some(id.as_str()) {
+        return Ok(());
+    }
+    reg.active = Some(id);
+    reg.save(&app.root)?;
+    switch_away(&app);
+    relaunch(&handle);
+    Ok(())
+}
+
+#[tauri::command]
+fn space_rename(id: String, name: String, app: State<'_, App>) -> Result<Value, String> {
+    let mut reg = Registry::load(&app.root)?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("a space needs a name".into());
+    }
+    reg.get_mut(&id).ok_or("no such space")?.name = name.into();
+    reg.save(&app.root)?;
+    Ok(reg.public())
+}
+
+/// Deletes a space and its data on this device (another space must be open).
+#[tauri::command]
+fn space_delete(id: String, app: State<'_, App>) -> Result<Value, String> {
+    let mut reg = Registry::load(&app.root)?;
+    reg.remove(&app.root, &id)?;
+    reg.save(&app.root)?;
+    Ok(reg.public())
+}
+
+/// Moves the open local space to a server: export, upload, import there; then adds that server
+/// as a remote space and opens it. The local space stays, renamed "… (moved)" (DESIGN §24.2).
+#[tauri::command]
+async fn space_move_to_server(
+    server: String,
+    password: Option<String>,
+    device_name: String,
+    app: State<'_, App>,
+    handle: AppHandle,
+) -> Result<Value, String> {
+    let space = app.space.clone().ok_or("no space is open")?;
+    if space["kind"] != "local" {
+        return Err("only a local space can be moved to a server".into());
+    }
+    let id = space["id"].as_str().unwrap_or_default().to_string();
+    let name = space["name"].as_str().unwrap_or("Notes").to_string();
+    let (base, code) = spaces::parse_server(&server)?;
+    let n = app.n()?.clone();
+    n.flush();
+    let zip = spaces::space_dir(&app.root, &id).join("move.zip");
+    let (b, z) = (base.clone(), zip.clone());
+    let (token, report) = blocking(move || {
+        let token = spaces::sign_in(&b, password.as_deref(), code.as_deref(), &device_name)?;
+        n.export_to(&z, true, true)?;
+        let report = spaces::import_zip(&b, &token, &z);
+        let _ = std::fs::remove_file(&z);
+        Ok((token, report?))
+    })
+    .await?;
+    let mut reg = Registry::load(&app.root)?;
+    if let Some(s) = reg.get_mut(&id) {
+        s.name = format!("{name} (moved)");
+    }
+    let s = reg.add(&app.root, &name, Kind::Remote)?;
+    s.server = Some(base);
+    s.pending_token = Some(token);
+    reg.active = Some(s.id.clone());
+    reg.save(&app.root)?;
+    switch_away(&app);
+    let h = handle.clone();
+    // Give the UI the report before the restart.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        relaunch(&h);
+    });
+    Ok(report)
+}
+
+/// Restarts the app (into the space just made active). Tauri's `restart` starts the new process
+/// while the old one is still running, which CEF can't share its profile and DevTools port with:
+/// on desktop Linux the new process waits for this one to exit first (`main`, `JESS_WAIT_FOR_PID`).
+fn relaunch(handle: &AppHandle) {
+    // Android: the UI restarts the app through MainActivity (`JessAndroid.restart()`, a separate
+    // process starts it again): Tauri's restart would re-execute a binary an APK doesn't have.
+    #[cfg(target_os = "android")]
+    {
+        let _ = handle;
+        return;
+    }
+    #[cfg(all(target_os = "linux", not(target_os = "android")))]
+    if let Ok(exe) = std::env::current_exe() {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(std::env::args_os().skip(1))
+            .env("JESS_WAIT_FOR_PID", std::process::id().to_string());
+        // Chromium's descriptors aren't all close-on-exec (the DevTools listening socket isn't):
+        // inherited, they'd keep the port and the old instance's helpers alive in the new one.
+        // SAFETY: only an async-signal-safe syscall between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32);
+                Ok(())
+            });
+        }
+        let spawned = cmd.spawn();
+        if spawned.is_ok() {
+            // Asks the event loop to stop (commands run on it: never block here).
+            handle.exit(0);
+            return;
+        }
+    }
+    #[cfg(not(target_os = "android"))]
     handle.restart()
+}
+
+/// Before a restart into another space: persist coalesced edits.
+fn switch_away(app: &App) {
+    if let Some(n) = &app.native {
+        n.flush();
+    }
 }
 
 // ------------------------------------------------------------------ docs
 
 #[tauri::command]
 fn open_doc(id: String, app: State<'_, App>) -> Result<Response, String> {
-    Ok(Response::new(frame(&app.native.open_doc(&id)?)))
+    Ok(Response::new(frame(&app.n()?.open_doc(&id)?)))
 }
 
 #[tauri::command]
 fn close_doc(id: String, app: State<'_, App>) {
-    app.native.close_doc(&id)
+    if let Some(n) = &app.native {
+        n.close_doc(&id)
+    }
 }
 
 #[tauri::command]
 fn doc_update(request: Request<'_>, app: State<'_, App>) -> Result<(), String> {
     let id = header_str(&request, "x-id");
-    app.native.doc_update(&id, raw_body(&request)?);
+    app.n()?.doc_update(&id, raw_body(&request)?);
     Ok(())
 }
 
 #[tauri::command]
 fn flush(app: State<'_, App>) {
-    app.native.flush()
+    if let Some(n) = &app.native {
+        n.flush()
+    }
 }
 
 #[tauri::command]
 fn doc_text(id: String, app: State<'_, App>) -> Result<String, String> {
-    app.native.doc_text(&id)
+    app.n()?.doc_text(&id)
 }
 
 // ------------------------------------------------------------------ index
 
 #[tauri::command]
 async fn backlinks(id: String, app: State<'_, App>) -> Result<Vec<Value>, String> {
-    Ok(app.native.backlinks(&id).await)
+    Ok(app.n()?.backlinks(&id).await)
 }
 
 #[tauri::command]
 async fn tags(app: State<'_, App>) -> Result<Vec<Value>, String> {
-    Ok(app.native.tags().await)
+    Ok(app.n()?.tags().await)
 }
 
 #[tauri::command]
 async fn notes_with_tag(tag: String, app: State<'_, App>) -> Result<Vec<String>, String> {
-    Ok(app.native.notes_with_tag(&tag).await)
+    Ok(app.n()?.notes_with_tag(&tag).await)
 }
 
 #[tauri::command]
 async fn search(q: String, app: State<'_, App>) -> Result<Vec<Value>, String> {
-    Ok(app.native.search(&q).await)
+    Ok(app.n()?.search(&q).await)
 }
 
 #[tauri::command]
 async fn attachment_refs(app: State<'_, App>) -> Result<Value, String> {
-    Ok(app.native.attachment_refs().await)
+    Ok(app.n()?.attachment_refs().await)
 }
 
 // ------------------------------------------------------------------ blobs
@@ -219,13 +436,15 @@ async fn attachment_refs(app: State<'_, App>) -> Result<Value, String> {
 async fn ingest(request: Request<'_>, app: State<'_, App>) -> Result<Value, String> {
     let name = header_str(&request, "x-name");
     let bytes = raw_body(&request)?;
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     blocking(move || n.ingest_bytes(&name, &bytes)).await
 }
 
 #[tauri::command]
 fn blob_want(hash: String, size: u64, prio: u8, app: State<'_, App>) {
-    app.native.blob_want(&hash, size, prio)
+    if let Some(n) = &app.native {
+        n.blob_want(&hash, size, prio)
+    }
 }
 
 #[tauri::command]
@@ -235,7 +454,7 @@ async fn blob_range(
     end: u64,
     app: State<'_, App>,
 ) -> Result<Response, String> {
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     Ok(Response::new(
         blocking(move || n.blob_range(&hash, begin, end)).await?,
     ))
@@ -243,7 +462,7 @@ async fn blob_range(
 
 #[tauri::command]
 async fn blob_read(hash: String, variant: String, app: State<'_, App>) -> Result<Response, String> {
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     let r = blocking(move || n.blob_read(&hash, &variant)).await?;
     // [mime length u32][mime][bytes]; empty = unavailable.
     Ok(Response::new(match r {
@@ -261,7 +480,9 @@ async fn blob_read(hash: String, variant: String, app: State<'_, App>) -> Result
 
 #[tauri::command]
 fn set_offline_mode(everything: bool, app: State<'_, App>) {
-    app.native.set_offline_mode(everything)
+    if let Some(n) = &app.native {
+        n.set_offline_mode(everything)
+    }
 }
 
 // ------------------------------------------------------------------ import / export
@@ -275,7 +496,7 @@ async fn import_plan(
     app: State<'_, App>,
     handle: AppHandle,
 ) -> Result<Value, String> {
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     let src = match kind.as_str() {
         "zip" if is_content_uri(&path) => {
             Source::ZipFile(Arc::new(open_document(&handle, &path, false)?))
@@ -292,13 +513,15 @@ async fn import_run(
     apply_all: Option<String>,
     app: State<'_, App>,
 ) -> Result<Value, String> {
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     blocking(move || n.import_run(&resolutions, apply_all.as_deref())).await
 }
 
 #[tauri::command]
 fn import_cancel(app: State<'_, App>) {
-    app.native.import_cancel()
+    if let Some(n) = &app.native {
+        n.import_cancel()
+    }
 }
 
 #[tauri::command]
@@ -309,7 +532,7 @@ async fn export_to(
     app: State<'_, App>,
     handle: AppHandle,
 ) -> Result<(), String> {
-    let n = app.native.clone();
+    let n = app.n()?.clone();
     if zip && is_content_uri(&path) {
         let f = open_document(&handle, &path, true)?;
         return blocking(move || n.export_zip_into(f, portable)).await;
@@ -364,13 +587,23 @@ fn open_document(handle: &AppHandle, uri: &str, write: bool) -> Result<std::fs::
 
 // ------------------------------------------------------------------ app
 
-fn open_native(root: &Path, events: Events) -> Result<Native, String> {
-    let data = root.join("data");
-    if root.join("ERASE").exists() {
+/// The open space's client, its public description, and a local space's server.
+type Opened = (Option<Native>, Option<Value>, Option<spaces::Embedded>);
+
+/// Opens the active space (DESIGN §24.1): its client store, and for a local space the embedded
+/// server it syncs with. A fresh install has no space: the UI offers to add one.
+fn open_space(root: &Path, events: Events) -> Result<Opened, String> {
+    let mut reg = Registry::load(root)?;
+    let Some(space) = reg.active().cloned() else {
+        return Ok((None, None, None));
+    };
+    let dir = spaces::space_dir(root, &space.id);
+    let data = dir.join("data");
+    if dir.join("ERASE").exists() {
         if data.exists() {
             std::fs::remove_dir_all(&data).map_err(|e| format!("erase: {e}"))?;
         }
-        let _ = std::fs::remove_file(root.join("ERASE"));
+        let _ = std::fs::remove_file(dir.join("ERASE"));
     }
     let sink: EventSink = Arc::new(move |v: Value| {
         if let Some(ch) = events.lock().expect("lock").as_ref() {
@@ -378,7 +611,57 @@ fn open_native(root: &Path, events: Events) -> Result<Native, String> {
         }
     });
     // Native starts its transport/pump tasks with tokio::spawn: open it inside the runtime.
-    tauri::async_runtime::block_on(async move { Native::open(&data, sink) })
+    let native = tauri::async_runtime::block_on(async move { Native::open(&data, sink) })?;
+    let mut embedded = None;
+    match space.kind {
+        Kind::Local => {
+            let secret = space
+                .secret
+                .clone()
+                .ok_or("the local space has no secret")?;
+            // Derivation re-executes this binary (`main` answers `derive`): not on Android.
+            let srv = spaces::Embedded::start(
+                &spaces::server_dir(root, &space.id),
+                &secret,
+                cfg!(all(target_os = "linux", not(target_os = "android"))),
+            )?;
+            // A new port every launch; the token from the first sign-in stays valid.
+            native.set_server(Some(srv.url.clone()));
+            if native.token().is_none() {
+                let url = srv.url.clone();
+                let t = std::thread::spawn(move || {
+                    spaces::sign_in(&url, Some(&secret), None, "this device")
+                })
+                .join()
+                .map_err(|_| "signing in to the local space failed".to_string())??;
+                native.set_token(Some(t));
+            }
+            embedded = Some(srv);
+        }
+        Kind::Remote => {
+            if let Some(token) = space.pending_token.clone() {
+                native.set_server(space.server.clone());
+                native.set_token(Some(token));
+                if let Some(s) = reg.get_mut(&space.id) {
+                    s.pending_token = None;
+                }
+                reg.save(root)?;
+            } else if space.server.is_none() {
+                // A space migrated from before spaces: learn its server from the client.
+                if let Some(url) = native.server() {
+                    if let Some(s) = reg.get_mut(&space.id) {
+                        if s.name == "My notes" {
+                            s.name = url.split("://").nth(1).unwrap_or(&url).to_string();
+                        }
+                        s.server = Some(url);
+                    }
+                    reg.save(root)?;
+                }
+            }
+        }
+    }
+    let public = reg.active().map(spaces::Space::public);
+    Ok((Some(native), public, embedded))
 }
 
 /// CEF re-executes this binary for its renderer, GPU and utility processes, and each must register
@@ -392,7 +675,7 @@ pub fn cef_helper() -> bool {
         command_line_args.push(("remote-debugging-port".into(), Some(port)));
     }
     tauri_runtime_cef::configure(tauri_runtime_cef::CefConfig {
-        identifier: "app.jessnotes.notes".into(),
+        identifier: APP_ID.into(),
         command_line_args,
         custom_schemes: vec![
             "tauri".into(),
@@ -414,20 +697,35 @@ pub fn run() {
     tauri::Builder::<Rt>::new()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .setup(|_app| {
+            #[cfg(target_os = "android")]
+            _app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
+            Ok(())
+        })
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&root)?;
             let events: Events = Arc::new(Mutex::new(None));
-            let native = open_native(&root, events.clone())?;
+            let (native, space, embedded) = open_space(&root, events.clone())?;
             app.manage(App {
                 native,
                 events,
                 root,
+                space,
+                _embedded: embedded,
             });
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("jess-blob", |ctx, request, responder| {
-            let native = ctx.app_handle().state::<App>().native.clone();
+            let Some(native) = ctx.app_handle().state::<App>().native.clone() else {
+                responder.respond(
+                    HttpResponse::builder()
+                        .status(404)
+                        .body(Vec::new())
+                        .expect("response"),
+                );
+                return;
+            };
             let path = request.uri().path().to_string();
             let range = request
                 .headers()
@@ -448,7 +746,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Persist coalesced edits before the window goes.
-                window.state::<App>().native.flush();
+                if let Some(n) = &window.state::<App>().native {
+                    n.flush();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -484,6 +784,14 @@ pub fn run() {
             import_run,
             import_cancel,
             export_to,
+            spaces_list,
+            space_add_local,
+            space_add_remote,
+            space_switch,
+            space_rename,
+            space_delete,
+            space_move_to_server,
+            space_current,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Jess Notes");

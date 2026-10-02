@@ -1,12 +1,13 @@
 // Smoke test of the real Linux app (CEF runtime, DESIGN §23) over the DevTools protocol:
-// sign in, write a note, paste an image (served back through `jess-blob://`), check the server
-// has both, find the note by full-text search, check the frame rate, and time cold starts.
+// spaces (DESIGN §24: a local space first, then the server added as a remote one, switching back,
+// and moving the local space to the server), a note, a pasted image (served back through
+// `jess-blob://`), the server having both, full-text search, the frame rate, and cold starts.
 //
 //   A display (Xvfb/xvfb-run on CI) and the UI's node_modules (Playwright) needed.
 //   node apps/tauri/e2e/smoke.mjs [path/to/jess-notes-app] [path/to/jess]
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, openSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createServer } from 'node:net'
@@ -68,14 +69,16 @@ function unzip(buf) {
 }
 
 // ------------------------------------------------------------------ the app, over CDP
-let proc, browser, page
+let proc, browser, page, cdp
 /** Launches the app on our data dirs (CEF's cache too) and attaches to its page. */
 async function launch() {
-  const cdp = await freePort()
+  cdp = await freePort()
   // Its own process group: CEF's helper processes go with it, and CEF ignores SIGTERM.
+  // The app's output (both its own and CEF's) goes to app.log, shown when the test fails.
+  const log = openSync(join(tmp, 'app.log'), 'a')
   proc = spawn(app, [], {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', log, log],
     env: { ...process.env, JESS_CDP_PORT: String(cdp), XDG_DATA_HOME: join(tmp, 'xdg'), XDG_CACHE_HOME: join(tmp, 'cache'), XDG_CONFIG_HOME: join(tmp, 'config') },
   })
   browser = await waitFor('DevTools endpoint', () => chromium.connectOverCDP(`http://127.0.0.1:${cdp}`))
@@ -91,6 +94,29 @@ async function quit() {
   } catch {}
   await browser?.close().catch(() => {})
   proc = browser = page = null
+}
+/**
+ * Runs `action`, which restarts the app into another space (adding, switching, moving), and
+ * attaches to the new process's page (same DevTools port: the restart keeps the environment).
+ */
+async function restarting(action) {
+  await exec(() => (window.__beforeRestart = true))
+  await action()
+  await browser?.close().catch(() => {})
+  browser = await waitFor(
+    'the app after its restart',
+    async () => {
+      const b = await chromium.connectOverCDP(`http://127.0.0.1:${cdp}`)
+      const p = b.contexts()[0]?.pages().find((x) => x.url().startsWith('tauri://'))
+      if (p && (await p.evaluate(() => !window.__beforeRestart && !!document.querySelector('#app > *')).catch(() => false))) {
+        page = p
+        return b
+      }
+      await b.close().catch(() => {})
+      return null
+    },
+    30_000,
+  )
 }
 const text = (css) => page.locator(css).first().innerText()
 const exec = (fn, arg) => page.evaluate(fn, arg)
@@ -109,14 +135,30 @@ async function main() {
   const started = Date.now()
   await launch()
   console.log(`engine: ${await exec(() => navigator.userAgent.match(/Chrome\/[\d.]+/)?.[0])}`)
-  // First launch: server address, then password.
-  await page.fill('[data-testid=server]', base)
-  await page.click('button[type=submit]')
-  await page.fill('[data-testid=password]', PASSWORD)
+  // A fresh install asks where notes live. First: a local space (no server).
+  await page.waitForSelector('[data-testid=spaces-welcome]')
+  await page.click('[data-testid=choose-local]')
+  await page.fill('[data-testid=space-name]', 'Journal')
+  await restarting(() => page.click('[data-testid=space-local-submit]'))
+  await waitFor('local space synced', async () => /Synced/.test(await text('[data-testid=sync-status]')), 30_000)
+  console.log(`local space ready ${Date.now() - started} ms after launch`)
+  if (!/Journal/.test(await text('[data-testid=space-switcher]'))) throw new Error('the local space is not the open one')
+  await page.click('[data-testid=new-note]')
+  await page.waitForSelector('.cm-content')
+  await page.click('.cm-content')
+  const localWord = `localsmoke${Date.now()}`
+  await page.keyboard.type(`Written in a local space ${localWord}`)
+  await waitFor('local note committed', async () => /Synced/.test(await text('[data-testid=sync-status]')))
+
+  // Then the server, added as a remote space (signing in on the way).
+  await page.click('[data-testid=space-switcher]')
+  await page.click('[data-testid=add-remote]')
+  await page.fill('[data-testid=space-server]', base)
+  await page.fill('[data-testid=space-password]', PASSWORD)
   const signIn = Date.now()
-  await page.click('button[type=submit]')
-  await waitFor('synced', async () => /Synced/.test(await text('[data-testid=sync-status]')))
-  console.log(`launch → synced ${Date.now() - started} ms (sign-in click → synced ${Date.now() - signIn} ms)`)
+  await restarting(() => page.click('[data-testid=space-remote-submit]'))
+  await waitFor('synced', async () => /Synced/.test(await text('[data-testid=sync-status]')), 30_000)
+  console.log(`remote space added → synced ${Date.now() - signIn} ms`)
 
   // Frame pacing: rAF runs at the display's rate (120 Hz panels must get 120, not WebKitGTK's 60).
   const fr = await exec(
@@ -212,11 +254,43 @@ async function main() {
   await page.fill('[aria-label="Search notes"]', word)
   await waitFor('search hit', async () => (await text('aside')).includes('Untitled'), 10_000)
 
+  // Back to the local space: its note is there. Then move it to the server.
+  await page.click('[role=tab]:nth-child(1)')
+  await page.click('[data-testid=space-switcher]')
+  const rows = page.locator('[data-testid=space-row]')
+  await restarting(() => rows.filter({ hasText: 'Journal' }).locator('[data-testid=space-open]').click())
+  await page.waitForSelector('[data-testid=tree]')
+  await exec(() => [...document.querySelectorAll('[data-testid=tree] [data-id]')].find((r) => r.textContent.trim() === 'Untitled')?.click())
+  await waitFor('local note after switching back', async () => (await text('.cm-content')).includes(localWord), 15_000)
+  await page.click('[data-testid=space-switcher]')
+  await page.click('[data-testid=space-move]')
+  await page.fill('[data-testid=space-server]', base)
+  await page.fill('[data-testid=space-password]', PASSWORD)
+  await restarting(async () => {
+    await page.click('[data-testid=space-remote-submit]')
+    await page.waitForSelector('[data-testid=space-moved]', { timeout: 60_000 })
+  })
+  await waitFor('moved space synced', async () => /Synced/.test(await text('[data-testid=sync-status]')), 30_000)
+  const zip2 = Buffer.from(await (await fetch(`${base}/api/admin/export.zip`, { headers: { authorization: `Bearer ${tok}` } })).arrayBuffer())
+  if (![...unzip(zip2)].some(([name, b]) => name.endsWith('.md') && b.includes(Buffer.from(localWord)))) throw new Error('the moved note is not on the server')
+  await page.click('[data-testid=space-switcher]')
+  if (!(await page.locator('[data-testid=space-row]').filter({ hasText: 'Journal (moved)' }).count())) throw new Error('the local copy was not kept')
+  await page.keyboard.press('Escape')
+  console.log('local space: kept across switching, moved to the server (local copy kept)')
+
   // Cold start: relaunch on the same data (the boot record is written 2 s after the last change).
   await page.click('[role=tab]:nth-child(1)')
   // Back to the note (the PDF was opened last), so the relaunch restores the note.
-  await exec(() => [...document.querySelectorAll('[data-testid=tree] [data-id]')].find((r) => r.textContent.trim() === 'Untitled')?.click())
-  await waitFor('note reopened', async () => (await text('.cm-content')).includes(word))
+  // (After the move the server has two "Untitled…" notes: open the one with this run's word.)
+  await waitFor('note reopened', async () => {
+    for (const row of await page.locator('[data-testid=tree] [data-id]').all()) {
+      if (!/^Untitled/.test((await row.textContent()).trim())) continue
+      await row.click()
+      await sleep(300)
+      if ((await text('.cm-content')).includes(word)) return true
+    }
+    return false
+  })
   await sleep(2500)
   await quit()
   const samples = []
@@ -246,6 +320,10 @@ main()
   .then(() => (process.exitCode = 0))
   .catch(async (e) => {
     console.error('FAILED:', e.message)
+    try {
+      const lines = readFileSync(join(tmp, 'app.log'), 'utf8').split('\n').filter((l) => l && !/Fontconfig/.test(l))
+      console.error(`app.log (last 25 lines):\n${lines.slice(-25).join('\n')}`)
+    } catch {}
     try {
       await page.screenshot({ path: join(tmp, 'fail.png') })
       console.error(`screenshot: ${join(tmp, 'fail.png')}`)

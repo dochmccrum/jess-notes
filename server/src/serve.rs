@@ -38,7 +38,11 @@ pub fn build(cfg: &Config) -> Result<Shared, String> {
     if account.is_none() {
         match &cfg.admin_password {
             Some(pw) => {
-                let phc = auth::hash_password(pw);
+                let phc = if cfg.random_secret {
+                    auth::hash_random_secret(pw)
+                } else {
+                    auth::hash_password(pw)
+                };
                 writer
                     .call_blocking(move |e| auth::set_password(&e.conn, &phc, true, now_ms()))
                     .map_err(|e| e.to_string())?;

@@ -10,10 +10,11 @@
   import { registerCommands } from './app-commands'
   import { writeBoot, type BootRecord } from './lib/boot'
   import { isTauri } from './lib/platform'
+  import { currentSpace, type Space } from './lib/spaces'
 
   let { boot }: { boot: BootRecord | null } = $props()
 
-  type Phase = 'gate' | 'blocked' | 'lost' | 'auth' | 'app'
+  type Phase = 'gate' | 'blocked' | 'lost' | 'spaces' | 'auth' | 'app'
   let phase: Phase = $state('gate')
   let app: AppState | null = $state(null)
   const gate = createTabGate()
@@ -24,7 +25,17 @@
     location.reload()
   })
 
+  let space: Space | null = null
+
   async function start() {
+    // Apps: a fresh install has no space yet; it chooses one first (DESIGN §24).
+    if (isTauri) {
+      space = await currentSpace()
+      if (!space) {
+        phase = 'spaces'
+        return
+      }
+    }
     const token = await getToken()
     if (!token) {
       phase = 'auth'
@@ -38,6 +49,7 @@
     if (isTauri) backend.setToken(token)
     if (boot) backend.entries.load(boot.entries)
     const a = new AppState(backend)
+    a.space = space
     registerCommands(a)
     app = a
     phase = 'app'
@@ -120,6 +132,8 @@
 
 {#if phase === 'app' && app}
   <App {app} {logout} />
+{:else if phase === 'spaces'}
+  {#await import('./components/Spaces.svelte') then { default: Spaces }}<Spaces welcome />{/await}
 {:else if phase === 'auth'}
   <Auth done={(t) => void launch(t)} />
 {:else if phase === 'blocked'}

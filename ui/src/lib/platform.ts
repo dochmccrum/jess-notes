@@ -19,3 +19,13 @@ type Internals = { invoke: <T>(cmd: string, args?: Record<string, unknown>, opti
 export function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__.invoke<T>(cmd, args ?? {})
 }
+
+/**
+ * Restarts the app after the Rust side has switched spaces or flagged an erase (DESIGN §24.1).
+ * Android only: there MainActivity restarts it from a separate process; elsewhere Rust already
+ * did. Resolves never on Android (the process ends).
+ */
+export function androidRestart() {
+  const bridge = (window as unknown as { JessAndroid?: { restart(): void } }).JessAndroid
+  if (isAndroid && bridge) bridge.restart()
+}
