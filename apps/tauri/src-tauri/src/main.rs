@@ -15,13 +15,21 @@ fn main() {
     // Relaunched into another space (lib.rs `relaunch`): let the previous instance finish first.
     // CEF won't share its profile (it hands this launch to the running instance and stops).
     #[cfg(target_os = "linux")]
-    if let Ok(pid) = std::env::var("JESS_WAIT_FOR_PID") {
-        std::env::remove_var("JESS_WAIT_FOR_PID");
-        wait_for_previous_instance(&pid);
-    }
+    let relaunched = match std::env::var("JESS_WAIT_FOR_PID") {
+        Ok(pid) => {
+            std::env::remove_var("JESS_WAIT_FOR_PID");
+            wait_for_previous_instance(&pid);
+            true
+        }
+        Err(_) => false,
+    };
     #[cfg(target_os = "linux")]
     if jess_notes_app::cef_helper() {
         return;
+    }
+    #[cfg(target_os = "linux")]
+    if relaunched {
+        wait_for_x_display();
     }
     jess_notes_app::run()
 }
@@ -66,5 +74,39 @@ fn wait_for_previous_instance(pid: &str) {
     let t = std::time::Instant::now();
     while (alive(pid) || lock_held()) && t.elapsed() < std::time::Duration::from_secs(15) {
         std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// After a relaunch, waits (up to 5 s) until the X display accepts a connection: the window can't
+/// be created otherwise, and CI saw a relaunched instance fail exactly there. Logs why if it can't.
+#[cfg(target_os = "linux")]
+fn wait_for_x_display() {
+    if std::env::var_os("DISPLAY").is_none() {
+        return;
+    }
+    let Ok(xlib) = x11_dl::xlib::Xlib::open() else {
+        eprintln!("jess: libX11 couldn't be loaded");
+        return;
+    };
+    let t = std::time::Instant::now();
+    loop {
+        // SAFETY: Xlib calls with a null display name (DISPLAY) and the display they return.
+        let d = unsafe { (xlib.XOpenDisplay)(std::ptr::null()) };
+        if !d.is_null() {
+            unsafe { (xlib.XCloseDisplay)(d) };
+            if t.elapsed().as_millis() > 0 {
+                eprintln!("jess: X display reachable after {:?}", t.elapsed());
+            }
+            return;
+        }
+        if t.elapsed() > std::time::Duration::from_secs(5) {
+            eprintln!(
+                "jess: can't open X display {:?} (XAUTHORITY {:?})",
+                std::env::var_os("DISPLAY"),
+                std::env::var_os("XAUTHORITY")
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }

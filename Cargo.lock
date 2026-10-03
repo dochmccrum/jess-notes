@@ -2451,6 +2451,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-runtime-cef",
  "tokio",
+ "x11-dl",
 ]
 
 [[package]]

@@ -33,6 +33,8 @@ base64 = "0.22"
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 # Relaunching closes inherited descriptors (`close_range`): see `relaunch` in lib.rs.
 libc = "0.2"
+# Checking the X display is reachable after a relaunch (main.rs); already a dependency of the runtime.
+x11-dl = "2.21"
 tauri-runtime-cef = { git = "https://github.com/SableClient/tauri-runtime-cef", rev = "6568170ae5fb27b38dae1e367f0bb3a09a040152" }
 
 # Everywhere else, the system WebView through wry (Android: Chromium, so 120 Hz where the display is).
