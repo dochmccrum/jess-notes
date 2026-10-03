@@ -91,6 +91,7 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 - [x] Android: ask for the display's highest refresh rate; smoke test logs the frame rate (`SMOKE_HZ=120` checks it).
 - [ ] **Owner:** run `SMOKE_HZ=120 node apps/tauri/e2e/android-smoke.mjs target/debug/jess` on a 120 Hz phone (docs/ANDROID.md).
 - [ ] Not yet measured: scrolling a 5,000-item file tree (needs `tools/vaultgen`, phase 7), the image viewer, the touch drawer on a phone.
+- [x] Simulation seed 280719 (nightly): a rename rewrite turned already-malformed markdown around a wikilink into a link that swallowed it, so the link no longer resolved (Invariant R). The server now re-parses rewritten docs and checks every link (`keeps_parse`), falls back to keeping the old text as an alias, and as the owner decided otherwise applies the plain rewrite as the one documented exception (DESIGN §6.6). Seed pinned; 10k seeds green.
 - [ ] Possible later: chunked markdown parsing for multi-MB notes (Lezer's reuse and rebalancing are linear in the number of blocks; fine at 1 MB today); CodeMirror's scroll rendering (12–19 ms tasks when scrolling fast into new territory, covered by the compositor at 120 Hz).
 - [x] Docs: DESIGN §23 and D12, SPEC addendum, AGENTS.md, ANDROID.md.
 
@@ -102,6 +103,9 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 - [x] Restarting into a space: on Linux the new process waits for the old one and its CEF profile lock, with inherited descriptors closed (Chromium's DevTools socket isn't close-on-exec); on Android a `RestartActivity` in its own process (Tauri's restart re-executes a binary an APK doesn't have, so "Erase this device" never restarted there either).
 - [x] UI: welcome screen (on this device / on a Jess server, QR scan on Android), Spaces dialog (sidebar header, palette), Settings: pairing QR code (`uqr`), no pairing/erase for local spaces.
 - [x] Smoke tests: Linux (local space → remote → switch back → move to server) and Android (local space → remote), both green.
+- [x] Restarts made reliable on Linux (6/6 smoke runs): the old process exits within 3 s even if CEF's shutdown stalls (it had outlasted the new process's 15 s wait), and the smoke test only attaches to a new DevTools id.
+- [x] Deb depends on `libxkbcommon-x11-0` (winit loads it at run time; the installed app crashed without it on CI).
+- [x] Cold start: release build 143–230 ms to the last note (SPEC < 300 ms; 173–179 ms before spaces). Debug builds got slower (311–682 ms against 148–199 ms): the app now links the server, and every CEF helper process re-executes the 465 MB debug binary. Not a release concern; noted for phase 7.
 - [ ] CI run with spaces.
 - [ ] **Owner:** scan a pairing QR code with a real phone (the emulator has no camera to point).
 - [ ] Possible later: show-and-scan pairing between two phones; an in-place space switch instead of a restart.

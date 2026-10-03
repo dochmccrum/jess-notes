@@ -140,6 +140,7 @@ pub fn set_text(doc: &Doc, new: &str) -> Vec<u8> {
         end16: (a.len() - s) as u32,
         old: String::new(),
         new: ins,
+        target: None,
     };
     apply_rewrites(doc, &[r])
 }
@@ -204,6 +205,7 @@ mod tests {
                 end16: 8,
                 old: "Old".into(),
                 new: "New".into(),
+                target: None,
             }],
         );
         apply(&a, &u2).unwrap();

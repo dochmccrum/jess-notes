@@ -26,6 +26,8 @@ pub struct Rewrite {
     pub end16: u32,
     pub old: String,
     pub new: String,
+    /// The entry the rewritten link must resolve to (checked by [`keeps_parse`]).
+    pub target: Option<Id>,
 }
 
 fn strip_md(p: &str) -> &str {
@@ -136,6 +138,7 @@ pub fn invariant_r_rewrites<'a>(
                     end16: link.target_range.1,
                     old,
                     new,
+                    target: Some(rb.id),
                 });
             }
         }
@@ -223,6 +226,43 @@ pub fn stale_link_target(
     Some(r)
 }
 
+/// Whether `rewrites` keep the doc's links intact (§6.6): rewriting a link's target can change
+/// how the text around it parses (`[t]( [[Old name]]e.md)` isn't a markdown link, because of the
+/// space, but `[t]( [[New]]e.md)` is, and swallows the wikilink). After the rewrites, the text must
+/// have the same links in the same order, each rewritten one resolving to its `target` and every
+/// other one to what `resolve` gives it now.
+pub fn keeps_parse(
+    text: &str,
+    rewrites: &[Rewrite],
+    resolve: impl Fn(&Link) -> Option<Id>,
+) -> bool {
+    let before = crate::links::extract(text).links;
+    let after = crate::links::extract(&apply_to_string(text, rewrites)).links;
+    before.len() == after.len()
+        && before.iter().zip(&after).all(|(b, a)| {
+            let expect = match rewrites
+                .iter()
+                .find(|r| (r.start16, r.end16) == b.target_range)
+            {
+                Some(r) => r.target,
+                None => resolve(b),
+            };
+            resolve(a) == expect
+        })
+}
+
+/// The alternative spelling [`keeps_parse`] falls back on: a wikilink without alias or subpath
+/// keeps its old text as its alias (`[[Old name]]` → `[[New|Old name]]`), so it reads the same and
+/// the characters around it stay as they were.
+pub fn with_alias(link: &Link, rw: &Rewrite) -> Option<Rewrite> {
+    (link.syntax == Syntax::Wiki && link.display.is_none() && link.subpath.is_none()).then(|| {
+        Rewrite {
+            new: format!("{}|{}", rw.new, link.target),
+            ..rw.clone()
+        }
+    })
+}
+
 /// Applies rewrites to a string (UTF-16 ranges), last-first. Used by tests and non-yrs callers.
 pub fn apply_to_string(text: &str, rewrites: &[Rewrite]) -> String {
     let mut u: Vec<u16> = text.encode_utf16().collect();
@@ -233,4 +273,64 @@ pub fn apply_to_string(text: &str, rewrites: &[Rewrite]) -> String {
         u.splice(r.start16 as usize..r.end16 as usize, new);
     }
     String::from_utf16_lossy(&u)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::links::extract;
+
+    fn id(n: u8) -> Id {
+        Id::new_v7(1, [n; 10])
+    }
+
+    /// A rewrite of the link at index `i` of `text` to `new`, meant to resolve to `target`.
+    fn rw(text: &str, i: usize, new: &str, target: Id) -> (Link, Rewrite) {
+        let l = extract(text).links[i].clone();
+        let r = Rewrite {
+            src: id(0),
+            start16: l.target_range.0,
+            end16: l.target_range.1,
+            old: written_target(&l).into(),
+            new: new.into(),
+            target: Some(target),
+        };
+        (l, r)
+    }
+
+    #[test]
+    fn a_rewrite_that_changes_the_surrounding_parse_is_caught_and_an_alias_fixes_it() {
+        // Simulation seed 280719: the space in the old name keeps `[t]( … )` from being a
+        // markdown link; without it, the markdown link swallows the wikilink.
+        let text = " [[x y]]  [t](Note [t]( [[Pasted image.png]]e.md) .md) ";
+        let img = id(1);
+        let resolve = |l: &Link| match l.target.as_str() {
+            "Ünï" => Some(img),
+            "x y" => Some(id(2)),
+            _ => None,
+        };
+        let (l, plain) = rw(text, 1, "Ünï", img);
+        assert!(!keeps_parse(text, std::slice::from_ref(&plain), resolve));
+        let alias = with_alias(&l, &plain).unwrap();
+        assert_eq!(alias.new, "Ünï|Pasted image.png");
+        assert!(keeps_parse(text, &[alias], resolve));
+    }
+
+    #[test]
+    fn ordinary_rewrites_keep_the_parse() {
+        let text = "See [[Old]] and [t](Old.md).";
+        let new = id(1);
+        let resolve = |l: &Link| (l.target == "New" || l.target == "New.md").then_some(new);
+        let (_, a) = rw(text, 0, "New", new);
+        let (_, b) = rw(text, 1, "New.md", new);
+        assert!(keeps_parse(text, &[a, b], resolve));
+    }
+
+    #[test]
+    fn no_alias_for_links_that_have_one_or_a_subpath() {
+        for text in ["[[Old|shown]]", "[[Old#Heading]]", "[t](Old.md)"] {
+            let (l, r) = rw(text, 0, "New", id(1));
+            assert!(with_alias(&l, &r).is_none(), "{text}");
+        }
+    }
 }

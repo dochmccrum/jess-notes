@@ -59,6 +59,7 @@ fn yrs_updates_for_yjs() {
             end16: l.target_range.1,
             old: "Old".into(),
             new: "New name".into(),
+            target: None,
         }],
     );
     ups.push(rw);

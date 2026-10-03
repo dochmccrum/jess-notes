@@ -354,7 +354,13 @@ fn relaunch(handle: &AppHandle) {
         }
         let spawned = cmd.spawn();
         if spawned.is_ok() {
-            // Asks the event loop to stop (commands run on it: never block here).
+            // Asks the event loop to stop (commands run on it: never block here). CEF's shutdown
+            // sometimes takes longer than the new process waits (or hangs): edits are flushed and
+            // committed already (`switch_away`), so after 3 s this process ends regardless.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                std::process::exit(0);
+            });
             handle.exit(0);
             return;
         }

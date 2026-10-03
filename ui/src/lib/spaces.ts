@@ -2,7 +2,7 @@
 // served by its server and has exactly one (remote) vault. Adding, switching and moving restart
 // the app into the space, so every store belongs to one space.
 import { deviceName } from './auth'
-import { androidRestart, isTauri } from './platform'
+import { androidRestart, isTauri, tauriInvoke } from './platform'
 
 export type SpaceKind = 'local' | 'remote'
 export interface Space {
@@ -17,10 +17,9 @@ export interface SpacesState {
   spaces: Space[]
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke } = await import('@tauri-apps/api/core')
-  return invoke<T>(cmd, args)
-}
+// Straight through Tauri's internals, like the rest of the boot path: `currentSpace` runs before
+// anything renders, and loading `@tauri-apps/api` first cost a serial module fetch at cold start.
+const call = <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => tauriInvoke<T>(cmd, args)
 
 export const spacesSupported = isTauri
 

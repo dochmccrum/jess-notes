@@ -576,6 +576,11 @@ impl Sim {
             let Some(after) = post.get(&doc) else {
                 continue;
             };
+            // The one accepted exception (§6.6, owner 2026-10-03): no spelling of the rewritten
+            // target kept the already-malformed markdown around it parsing the same way.
+            if e.forced_parse_changes.contains(&doc) {
+                continue;
+            }
             assert_eq!(
                 before.len(),
                 after.len(),
@@ -1607,7 +1612,7 @@ fn run_seed(seed: u64, verbose: bool) {
 /// the re-referenced bytes local-only (safe; the check was too strict).
 /// 376378: an offline Restore of a note purged meanwhile, pushed after the edit that recovered it
 /// (item 58; the check was too narrow).
-const REGRESSION_SEEDS: &[u64] = &[34393, 110067, 183854, 193393, 212421, 376378];
+const REGRESSION_SEEDS: &[u64] = &[34393, 110067, 183854, 193393, 212421, 280719, 376378];
 
 #[test]
 fn simulation() {

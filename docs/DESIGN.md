@@ -350,6 +350,17 @@ This one rule covers all of these:
 
 **Stale links from devices that hadn't seen the rename.** Suppose device Y is offline, adds `[[Old]]` to some note, and syncs after device X renamed Old→New. For each *newly introduced* link in a doc update (in the link index after but not before), the server looks for `rename_history` rows with `seq > op.known_seq` whose *old* location the link's target matches (using the resolver rules applied to the old location), excluding renames from the same replica with a lower op id, unless they're `induced`. If exactly one entry matches, the link is rewritten to point at that entry. Otherwise it's left alone, as a visible unresolved or differently-resolved link. The same rule handles collision suffixes (the device's links to `[[Untitled]]` follow its note to `Untitled 1`). It's best-effort by design: the worst outcome is a visibly unresolved link, never lost text.
 
+**Rewrites must not change the surrounding parse.** Rewriting a target can change how the text
+*around* the link parses: `[t]( [[Old name]]e.md)` isn't a markdown link (its destination has a
+space), but `[t]( [[New]]e.md)` is, and it swallows the wikilink (simulation seed 280719). So the
+server re-parses each rewritten doc and checks that it has the same links, in the same order,
+each resolving where it did (`keeps_parse` in `core/src/rewrite.rs`). If not, it tries keeping a
+wikilink's old text as its alias (`[[New|Old name]]`), which reads the same and leaves the
+characters around it alone. If no spelling keeps the parse, the plain rewrite stands (owner,
+2026-10-03): the link itself points where it did, and only markdown that was already malformed
+around it changes meaning. That's the one accepted exception to Invariant R; the engine records
+those docs (`forced_parse_changes`), and the simulation exempts exactly them.
+
 **Concurrent edits inside a link being rewritten** (a device edits the characters of `[[Old]]` while the server rewrites it) can produce Yjs-interleaved text such as `[[NewOld-typo]]`. Nothing is lost, the link shows as unresolved, and it's rare for a single user. Accepted and documented.
 
 **Cost.** The server keeps the `links` table (target key, resolved id, UTF-16 range) up to date. Candidates for a rename are the links whose `target_key` equals the old or new basename, links whose `resolved` is in S, and links from sources inside S. Each candidate is re-resolved against the after-state, so the work is proportional to the affected links, not the vault size.

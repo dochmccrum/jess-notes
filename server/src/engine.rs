@@ -12,7 +12,8 @@ use jess_core::model::{BlobInfo, Entry, KIND_MARKDOWN, KIND_VAULT, SLOT_BODY};
 use jess_core::ops::{AckResult, MetaOp, Op, OpBody, Reject};
 use jess_core::resolve::ResolveIndex;
 use jess_core::rewrite::{
-    format_target, invariant_r_rewrites, stale_link_target, HistoryRow, Rewrite,
+    format_target, invariant_r_rewrites, keeps_parse, stale_link_target, with_alias, HistoryRow,
+    Rewrite,
 };
 use jess_core::state::MetaState;
 use jess_core::{Hash, Id};
@@ -142,6 +143,9 @@ pub struct Engine {
     rng: StdRng,
     /// Fault injection: fail the next commit (simulated crash mid-batch).
     pub fail_next_commit: bool,
+    /// Docs whose rename rewrite had to change how surrounding (already malformed) markdown
+    /// parses, the one accepted exception to Invariant R (§6.6). Read by the simulation.
+    pub forced_parse_changes: Vec<Id>,
 }
 
 impl Engine {
@@ -184,6 +188,7 @@ impl Engine {
             },
             rng,
             fail_next_commit: false,
+            forced_parse_changes: Vec::new(),
         };
         if e.state.get(&jess_core::ids::VAULT_SETTINGS_ID).is_none() {
             let op = MetaOp::Create {
@@ -1086,6 +1091,7 @@ impl Engine {
                                     end16: link.target_range.1,
                                     old,
                                     new,
+                                    target: Some(t.id),
                                 });
                             }
                         }
@@ -1101,9 +1107,38 @@ impl Engine {
                 v.push(r);
             }
         }
-        for (src, rws) in by_src {
+        for (src, mut rws) in by_src {
             if !self.is_markdown(&src) {
                 continue;
+            }
+            // A rewrite can change how the text around it parses (§6.6): check, and try keeping
+            // the old text as a wikilink alias. If no spelling keeps the parse, the plain rewrite
+            // stands (owner, 2026-10-03): the link points where it did, and only already-broken
+            // markdown around it changes meaning.
+            let text = self.doc_text(src, SLOT_BODY)?;
+            let folder = self.state.folder_of(src);
+            let resolve = |l: &Link| self.ix.resolve(&l.target, l.syntax, &folder).map(|r| r.id);
+            if !keeps_parse(&text, &rws, resolve) {
+                let links = extract(&text).links;
+                let alt: Vec<Rewrite> = rws
+                    .iter()
+                    .map(|r| {
+                        links
+                            .iter()
+                            .find(|l| l.target_range == (r.start16, r.end16))
+                            .and_then(|l| with_alias(l, r))
+                            .unwrap_or_else(|| r.clone())
+                    })
+                    .collect();
+                if keeps_parse(&text, &alt, resolve) {
+                    rws = alt;
+                } else {
+                    tracing::warn!(
+                        ?src,
+                        "link rewrite changes the surrounding markdown's parse"
+                    );
+                    self.forced_parse_changes.push(src);
+                }
             }
             let d = self.load_doc(src, SLOT_BODY)?;
             let update = ydoc::apply_rewrites(d, &rws);

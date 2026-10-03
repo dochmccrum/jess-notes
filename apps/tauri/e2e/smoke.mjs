@@ -100,12 +100,17 @@ async function quit() {
  * attaches to the new process's page (same DevTools port: the restart keeps the environment).
  */
 async function restarting(action) {
+  // Each browser process has its own DevTools id: only a new one is the restarted app (the old
+  // process keeps the port until it has exited).
+  const id = async () => (await (await fetch(`http://127.0.0.1:${cdp}/json/version`)).json()).webSocketDebuggerUrl
+  const before = await id()
   await exec(() => (window.__beforeRestart = true))
   await action()
   await browser?.close().catch(() => {})
   browser = await waitFor(
     'the app after its restart',
     async () => {
+      if ((await id().catch(() => before)) === before) return null
       const b = await chromium.connectOverCDP(`http://127.0.0.1:${cdp}`)
       const p = b.contexts()[0]?.pages().find((x) => x.url().startsWith('tauri://'))
       if (p && (await p.evaluate(() => !window.__beforeRestart && !!document.querySelector('#app > *')).catch(() => false))) {
