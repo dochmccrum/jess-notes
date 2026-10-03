@@ -1244,8 +1244,11 @@ rendering, and a forced vblank timer. So the Linux app runs on CEF:
   `libwebkit2gtk-4.1-0` dependency that Tauri's bundler always adds, since the CEF build doesn't
   link WebKitGTK. The deb also installs an AppArmor profile (`/etc/apparmor.d/jess-notes`, loaded
   by its postinst) that lets Chromium's sandbox create user namespaces on Ubuntu 23.10+, which
-  restricts them. AppImages can't install a profile; on those systems the sandbox needs the
-  distribution's own setting relaxed.
+  restricts them. AppImages can't install a profile: on systems that restrict
+  unprivileged user namespaces (Ubuntu 23.10+, some Debian kernels), the AppImage restarts itself
+  with `--no-sandbox` and says so on stderr (owner, 2026-10-04). It shows only the user's own notes
+  and its own UI (raw HTML is shown as source), so the exposure is small; the .deb always keeps
+  the sandbox. `JESS_NO_SANDBOX=1` forces the same for any package (troubleshooting).
   The AppImage puts CEF's runtime in its own `usr/lib`: Tauri's AppImage tool (linuxdeploy)
   rewrites the binary's runpath to `$ORIGIN/../lib` and copies every library it resolves there.
   With CEF in `usr/lib/jess-notes`, it copied `libcef.so` away from its resources, and CEF

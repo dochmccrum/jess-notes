@@ -107,6 +107,7 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 - [x] Deb depends on `libxkbcommon-x11-0` (winit loads it at run time; the installed app crashed without it on CI).
 - [x] Cold start: release build 143–230 ms to the last note (SPEC < 300 ms; 173–179 ms before spaces). Debug builds got slower (311–682 ms against 148–199 ms): the app now links the server, and every CEF helper process re-executes the 465 MB debug binary. Not a release concern; noted for phase 7.
 - [x] CI fixes: the Android job ran out of disk for the emulator's data partition (it frees the per-ABI builds first now); a relaunched Linux instance once failed to open the X display on CI, so it now waits up to 5 s for it and logs why (the failure didn't reproduce in 6 local Xvfb runs), and CI keeps `app.log` on failure.
+- [x] AppImage on Ubuntu 23.10+ (no AppArmor profile, so no sandbox): restarts itself with `--no-sandbox` there (owner's call); checked in a container that blocks user namespaces, and on CI's Ubuntu 24.04.
 - [ ] CI run with spaces.
 - [ ] **Owner:** scan a pairing QR code with a real phone (the emulator has no camera to point).
 - [ ] Possible later: show-and-scan pairing between two phones; an in-place space switch instead of a restart.

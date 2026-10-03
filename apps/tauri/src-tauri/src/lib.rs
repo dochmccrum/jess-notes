@@ -698,6 +698,58 @@ pub fn cef_helper() -> bool {
     false
 }
 
+/// Starts this process again with `--no-sandbox` on its command line when the sandbox can't work
+/// (see [`appimage_without_sandbox`]). Chromium decides on the sandbox from the process's own
+/// arguments, before the runtime's command-line hook runs, so the switch has to be there. Call
+/// first thing in `main` (not in CEF's helper processes, which inherit the switch).
+#[cfg(all(target_os = "linux", not(target_os = "android")))]
+pub fn ensure_no_sandbox_arg() {
+    use std::os::unix::process::CommandExt;
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args
+        .iter()
+        .any(|a| a == "--no-sandbox" || a.to_string_lossy().starts_with("--type="))
+        || !appimage_without_sandbox()
+    {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let e = std::process::Command::new(exe)
+            .args(&args[1..])
+            .arg("--no-sandbox")
+            .exec();
+        eprintln!("jess: couldn't restart without the sandbox: {e}");
+    }
+}
+
+/// The AppImage on a system that restricts unprivileged user namespaces (Ubuntu 23.10+ through
+/// AppArmor, some Debian kernels by sysctl): Chromium's sandbox needs them, and only an installed
+/// AppArmor profile (the .deb's) can grant them. There the AppImage runs without the sandbox
+/// rather than not at all (owner, 2026-10-04; DESIGN §23.2); the .deb always keeps it.
+#[cfg(all(target_os = "linux", not(target_os = "android")))]
+pub fn appimage_without_sandbox() -> bool {
+    // An explicit escape hatch, any package: `JESS_NO_SANDBOX=1`.
+    if std::env::var_os("JESS_NO_SANDBOX").is_some() {
+        return true;
+    }
+    if std::env::var_os("APPIMAGE").is_none() {
+        return false;
+    }
+    let sysctl = |p: &str| {
+        std::fs::read_to_string(p)
+            .map(|v| v.trim().to_string())
+            .ok()
+    };
+    let restricted = sysctl("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").as_deref()
+        == Some("1")
+        || sysctl("/proc/sys/kernel/unprivileged_userns_clone").as_deref() == Some("0")
+        || sysctl("/proc/sys/user/max_user_namespaces").as_deref() == Some("0");
+    if restricted {
+        eprintln!("jess: this system restricts user namespaces, so the AppImage runs without Chromium's sandbox (install the .deb to keep it)");
+    }
+    restricted
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::<Rt>::new()

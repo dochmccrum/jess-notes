@@ -24,6 +24,8 @@ fn main() {
         Err(_) => false,
     };
     #[cfg(target_os = "linux")]
+    jess_notes_app::ensure_no_sandbox_arg();
+    #[cfg(target_os = "linux")]
     if jess_notes_app::cef_helper() {
         return;
     }
