@@ -73,10 +73,11 @@ test('change the vault password in Settings', async ({ page, browser }) => {
     await form.getByLabel('New password', { exact: true }).fill('a whole new password')
     await form.getByLabel('New password again').fill('a whole new password')
     await form.getByRole('button', { name: 'Change password' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'current password is wrong' })).toBeVisible()
+    // Argon2id (64 MiB) takes a while on a shared CI runner: once to check, once more to change.
+    await expect(page.getByRole('status').filter({ hasText: 'current password is wrong' })).toBeVisible({ timeout: 20_000 })
     await form.getByLabel('Current password').fill('the first password')
     await form.getByRole('button', { name: 'Change password' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Password changed' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Password changed' })).toBeVisible({ timeout: 20_000 })
     // Another device signs in with the new one.
     await signIn(await (await browser.newContext()).newPage(), 'a whole new password')
   } finally {

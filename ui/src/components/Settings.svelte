@@ -40,11 +40,14 @@
 
   let pw = $state({ current: '', next: '', again: '' })
   let pwMsg: { ok: boolean; text: string } | null = $state(null)
+  let pwBusy = $state(false)
   async function savePassword(e: SubmitEvent) {
     e.preventDefault()
     if (!token) return
     if (pw.next.length < 8) return void (pwMsg = { ok: false, text: 'The new password needs at least 8 characters.' })
     if (pw.next !== pw.again) return void (pwMsg = { ok: false, text: 'The new passwords don’t match.' })
+    pwBusy = true
+    pwMsg = null
     try {
       await changePassword(token, pw.current, pw.next)
       pw = { current: '', next: '', again: '' }
@@ -52,6 +55,8 @@
     } catch (err) {
       const m = (err as Error).message
       pwMsg = { ok: false, text: m === '429' ? 'Too many attempts: try again in a minute.' : m === 'wrong password' ? 'The current password is wrong.' : `Couldn’t change it: ${m}` }
+    } finally {
+      pwBusy = false
     }
   }
 
@@ -139,7 +144,7 @@
       <input type="password" autocomplete="current-password" placeholder="Current password" bind:value={pw.current} aria-label="Current password" />
       <input type="password" autocomplete="new-password" placeholder="New password (8+ characters)" bind:value={pw.next} aria-label="New password" />
       <input type="password" autocomplete="new-password" placeholder="New password again" bind:value={pw.again} aria-label="New password again" />
-      <button class="btn" type="submit" disabled={!pw.current || !pw.next}>Change password</button>
+      <button class="btn" type="submit" disabled={!pw.current || !pw.next || pwBusy}>{pwBusy ? 'Changing…' : 'Change password'}</button>
     </form>
     {#if pwMsg}<p class="small" class:muted={pwMsg.ok} role="status">{pwMsg.text}</p>{/if}
   </section>
