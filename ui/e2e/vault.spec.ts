@@ -98,12 +98,21 @@ test('sidebar modes: shortcut and hover-reveal', async ({ page }) => {
   await page.keyboard.press(`${MOD}+\\`)
   const box = () => sb.boundingBox()
   await expect.poll(async () => (await box())!.x + (await box())!.width).toBeLessThanOrEqual(1)
-  // Brief pass through the hot zone doesn't open it (100 ms intent).
+  // Brief pass through the hot zone doesn't open it (100 ms intent). Only checkable when the pass
+  // really was brief: on a slow runner one synthetic mouse move can take longer than that.
   await page.mouse.move(400, 300)
+  const t0 = Date.now()
   await page.mouse.move(2, 300)
   await page.mouse.move(400, 300)
+  const pass = Date.now() - t0
   await page.waitForTimeout(250)
-  expect((await box())!.x + (await box())!.width).toBeLessThanOrEqual(1)
+  if (pass < 80) expect((await box())!.x + (await box())!.width).toBeLessThanOrEqual(1)
+  else console.log(`hot-zone pass took ${pass} ms: not brief, intent check skipped`)
+  // Closed again before dwelling, whatever happened above.
+  if ((await box())!.x === 0) {
+    await page.keyboard.press(`${MOD}+\\`)
+    await expect.poll(async () => (await box())!.x + (await box())!.width).toBeLessThanOrEqual(1)
+  }
   // Dwelling opens it.
   await page.mouse.move(2, 300)
   await expect.poll(async () => (await box())!.x, { timeout: 2000 }).toBe(0)

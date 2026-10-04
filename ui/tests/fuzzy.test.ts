@@ -26,9 +26,14 @@ describe('fuzzy', () => {
     s.load(bigVault(10_000, 20_000))
     s.switcherCandidates(true) // build once, as the app does
     for (const q of ['note 12', 'topic 5', 'pasted image 1999.png', 'zzzz', 'f1/n']) {
-      const t0 = performance.now()
-      search(s.switcherCandidates(EntryStore.wantsMedia(q)), q, 50)
-      expect(performance.now() - t0, q).toBeLessThan(30)
+      // Best of 3: Vitest runs test files in parallel, and one sample can land on a busy core.
+      let best = Infinity
+      for (let i = 0; i < 3; i++) {
+        const t0 = performance.now()
+        search(s.switcherCandidates(EntryStore.wantsMedia(q)), q, 50)
+        best = Math.min(best, performance.now() - t0)
+      }
+      expect(best, q).toBeLessThan(30)
     }
   })
 })

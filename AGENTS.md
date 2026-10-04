@@ -10,9 +10,10 @@ A fast, local-first, Obsidian-compatible markdown notes app with a self-hosted R
 2. `docs/SPEC.md` — the owner's original brief, verbatim. Requirements and acceptance targets live here.
 3. `docs/PHASES.md` — phase checklist, current status, and phase log. **Keep it updated.**
 
-## Current state (2026-10-01)
+## Current state (2026-10-04)
 - Phases 0–6 done (see the Phase log in `docs/PHASES.md`); implementation decisions beyond the approved design are in `docs/DESIGN.md` §22.
-- Phase 6.5 (owner requirement: 120 Hz everywhere, DESIGN §23, decision D12) is in progress: the Linux app runs on CEF (`tauri-runtime-cef`, pinned; Tauri held at 2.11 for it), frame pacing in `ui/src/lib/frames.ts`, smoothness e2e in `ui/e2e/smoothness.spec.ts`. Phase 6.6 (spaces: local vaults on an embedded server, remote ones, QR pairing; DESIGN §24, D13) is in progress on top of it. Open items are in `docs/PHASES.md`. Phase 7 (performance + polish) follows.
+- Phases 6.5 (120 Hz everywhere: CEF on Linux, frame pacing; DESIGN §23, D12) and 6.6 (spaces: local vaults on an embedded server, remote ones, QR pairing; DESIGN §24, D13) are done; open owner items are in `docs/PHASES.md`. Next step: Phase 7 (performance + polish).
+- CI on the dev machine: `scripts/ci-local.sh [job…]` runs the workflow's jobs here (logs in `target/ci-local/`); only the stock-Ubuntu deb install needs GitHub. The smoke tests open windows on the display: don't type into them.
 - All work is on `main`.
 - Build: `cd ui && corepack enable && pnpm install && pnpm wasm && pnpm build` (needs `wasm-bindgen-cli` 0.2.129, the `wasm32-unknown-unknown` target, and `wasm-opt` from binaryen for the real sizes); server `cargo build -p jess-server`; tests `cargo test --workspace`, `SIM_SEEDS=10000 cargo test --release -p jess-server --test sim`, `cd ui && pnpm test && pnpm e2e` (e2e needs the built UI and `target/debug/jess`; set `JESS_PDFIUM_LIB` for PDF tests — CI shows how to fetch `libpdfium.so`).
 - WebKit e2e (`E2E_WEBKIT=1`) doesn't run on Fedora (Playwright's WebKit build needs Ubuntu libraries). Run it in `mcr.microsoft.com/playwright:v1.56.1-noble` with the repo mounted at the same path, `JESS_BIN` pointing at a `jess` built in `rust:1.93-bookworm` (the host binary needs a newer glibc), and `JESS_PDFIUM_LIB` set.
