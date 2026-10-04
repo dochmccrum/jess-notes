@@ -3,6 +3,7 @@
 One container, one port (8080), one volume (`/data`). The server also serves the web app, so
 there is nothing else to deploy. These steps assume **Coolify** with its bundled Traefik
 (which terminates TLS), but any Docker host behind an HTTPS reverse proxy works the same way.
+**Step-by-step Coolify instructions are in [COOLIFY.md](COOLIFY.md)**; this file is the reference.
 
 ## 1. Sizing
 
@@ -58,8 +59,10 @@ provides. The mirror can always be rebuilt (`jess rebuild-mirror`).
    | `JESS_TRUST_PROXY` | `true` | Use `X-Forwarded-For` for client IPs (login rate limiting). Set `false` if the port is exposed without a proxy. |
    | `RUST_LOG` | `info` | Log level. |
 
-5. **Stop timeout**: raise *Advanced → Stop grace period* to **30 s**. On SIGTERM the server
-   finishes in-flight writes, flushes the mirror (≤ 10 s) and checkpoints the database.
+5. **Stop timeout**: if your Coolify version has a stop timeout / grace period setting, use
+   **30 s**. On SIGTERM the server finishes in-flight writes, flushes the mirror (≤ 10 s) and
+   checkpoints the database (acknowledged writes are already committed, so a shorter timeout
+   never loses synced data).
 6. **Health check**: the image has one built in (`jess health` → `GET /healthz`). Coolify picks
    it up automatically; nothing to configure.
 7. Deploy. Then open the **logs** once and look for:
