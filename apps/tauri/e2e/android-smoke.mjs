@@ -142,7 +142,9 @@ async function attach() {
   if (!device) throw new Error('no Android device')
   const wv = await device.webView({ pkg: PKG }, { timeout: 20_000 })
   // Short, so a stuck connection is retried (`restarting`) rather than waited out.
-  return within(15_000, 'the WebView page (CDP)', wv.page())
+  const page = await within(15_000, 'the WebView page (CDP)', wv.page())
+  if (!page) throw new Error('the WebView went away (the app died?)')
+  return page
 }
 
 /** What the device was doing, for a failure on CI: the app's and the WebView's last log lines. */
@@ -240,10 +242,26 @@ async function main() {
   // CI's emulator is slow enough for system apps to raise "isn't responding" dialogs over ours.
   adb('shell', 'settings', 'put', 'global', 'hide_error_dialogs', '1')
   adb('shell', 'pm', 'clear', PKG)
-  console.log('launching')
-  launch()
-  console.log('attaching to the WebView')
-  let page = await attach()
+  // A freshly booted emulator settles for a while: CI saw Google Play services restart and take
+  // the app down with it (it uses the fonts provider). The first launch, before any state
+  // exists, is retried; later steps aren't.
+  let page
+  for (let attempt = 1; ; attempt++) {
+    console.log('launching')
+    launch()
+    console.log('attaching to the WebView')
+    try {
+      page = await attach()
+      await within(15_000, 'the first page', page.evaluate(() => document.readyState))
+      break
+    } catch (e) {
+      if (attempt === 3) throw e
+      console.log(`first launch failed (${e.message}); retrying`)
+      await detach()
+      adb('shell', 'am', 'force-stop', PKG)
+      await sleep(5000)
+    }
+  }
   console.log(`WebView: ${await page.evaluate(() => /Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0])}`)
   // Frame pacing (DESIGN §23.4): the WebView follows the display; on a 120 Hz phone MainActivity
   // asks for the fastest mode. `SMOKE_HZ=120` turns the log into a check.

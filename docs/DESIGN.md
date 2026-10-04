@@ -1352,7 +1352,10 @@ each tightens a rule the simulation showed was underspecified.
     first run showed the cause: the app had restarted correctly, but the 2-core emulator was so
     loaded that the Pixel Launcher raised "isn't responding" and the WebView's DevTools socket
     stalled. The emulator now gets the runner's 4 cores and 4 GB, error dialogs are hidden,
-    and each attach gives up after 15 s and retries within 2 minutes.
+    and each attach gives up after 15 s and retries within 2 minutes. The next run showed the
+    other face of a cold emulator: Google Play services restarted and Android killed the app
+    with it (the fonts provider). The first launch, before any state exists, is now retried up to
+    three times, and each retry is logged.
 84. **A relaunched Linux app waits 500 ms if X refused it at first.** After a relaunch the X
     display can briefly refuse connections while the previous instance's processes let go of
     theirs. CI once saw CEF fail to create the window right after the display answered.
