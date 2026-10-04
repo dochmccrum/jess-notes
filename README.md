@@ -50,8 +50,9 @@ Download from the [releases](https://github.com/dochmccrum/jess-notes/releases):
 
 - **Linux:** `jess-notes_*_amd64.deb` (Debian, Ubuntu) or the AppImage (anywhere). They include
   their own Chromium engine for smooth 120 Hz rendering, which makes the download large (~170 MB).
-- **Android** (7.0+; Android System WebView 100+): `jess-notes-*-arm64.apk` (almost all phones)
-  or `-armv7.apk` (older ones).
+- **Android** (7.0+; Android System WebView 100+): signed APKs (`jess-notes-*-arm64.apk` for
+  almost all phones, `-armv7.apk` for older ones) come with a later release. Until then, build it
+  ([docs/ANDROID.md](docs/ANDROID.md)) or use the web app.
 - **Web, iPad, other systems:** open your server's address in a browser.
 
 In an app, choose *On a Jess server* and enter the address and password. A signed-in device can
