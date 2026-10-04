@@ -50,6 +50,18 @@ device:
 keytool -genkeypair -keystore jess-release.jks -alias jess -keyalg RSA -keysize 4096 -validity 10000
 ```
 
+**Releases** (`.github/workflows/release.yml`) sign the APKs with the same key, from four
+repository secrets (*Settings → Secrets and variables → Actions*):
+
+```sh
+base64 -w0 jess-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD   # prompts
+gh secret set ANDROID_KEY_ALIAS --body jess
+gh secret set ANDROID_KEY_PASSWORD        # prompts
+```
+
+Without them a release has no APKs (the Linux app and the server image are published anyway).
+
 ## Testing on a device or emulator
 
 `apps/tauri/e2e/android-smoke.mjs` drives the real app over the WebView's DevTools socket

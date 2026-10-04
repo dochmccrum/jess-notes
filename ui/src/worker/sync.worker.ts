@@ -10,10 +10,10 @@ import type { Req, WorkerEvent, InitResult } from './protocol'
 import type { EntryMeta, Extracted, SyncStatus } from '../lib/types'
 import { SearchIndex, targetKey } from './search-index'
 import { randomHex } from '../lib/ids'
+import { version as VERSION } from '../../package.json'
 
 declare const self: DedicatedWorkerGlobalScope
 
-const VERSION = '0.1.0'
 const CHUNK = 4 << 20
 
 let db: IDBDatabase

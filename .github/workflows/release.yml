@@ -1,0 +1,212 @@
+name: release
+
+# Push a tag like v1.0.0 (the version in Cargo.toml and ui/package.json) to publish:
+#   - the server image, ghcr.io/<owner>/jess-notes:{1.0.0, 1.0, 1, latest}, for amd64 and arm64;
+#   - the Linux app (.deb, AppImage) and, when signing secrets are set, the Android APKs, on a
+#     GitHub release whose notes are the version's CHANGELOG.md section.
+# Android signing secrets (docs/ANDROID.md): ANDROID_KEYSTORE_BASE64 (the .jks, base64),
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. Without them the release
+# has no APKs.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  image:
+    strategy:
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-24.04, arch: amd64 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+
+  manifest:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: /tmp/digests
+          merge-multiple: true
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+      - name: Tag the multi-arch image
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ steps.name.outputs.image }}@sha256:%s ' *)
+          docker buildx imagetools inspect "${{ steps.name.outputs.image }}:${{ steps.meta.outputs.version }}"
+
+  linux:
+    runs-on: ubuntu-24.04
+    env:
+      CEF_PATH: /home/runner/cef
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/android
+          sudo docker image prune --all --force > /dev/null
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libx11-dev libxdo-dev cmake ninja-build librsvg2-dev libayatana-appindicator3-dev patchelf file binaryen
+      - run: cargo install --locked wasm-bindgen-cli --version 0.2.129
+      - run: cd ui && pnpm install --frozen-lockfile && pnpm wasm && pnpm build
+      - name: The app on CEF, its .deb and AppImage
+        run: |
+          cargo build --release -p jess-notes-app --features tauri/custom-protocol
+          apps/tauri/cef/stage.sh target/release
+          cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage
+          for d in ../../target/release/bundle/deb/*.deb; do cef/fix-deb.sh "$d"; done
+      - name: File names without spaces
+        run: |
+          mkdir -p out
+          cp target/release/bundle/deb/*.deb "out/jess-notes_${GITHUB_REF_NAME#v}_amd64.deb"
+          cp target/release/bundle/appimage/*.AppImage "out/Jess_Notes-${GITHUB_REF_NAME#v}-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/*
+
+  android:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 28.2.13676358
+      KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - name: Signing secrets
+        id: signing
+        run: echo "ok=$([ -n "$KEYSTORE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.signing.outputs.ok == 'true'
+        name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/android/sdk/ndk
+          sudo docker image prune --all --force > /dev/null
+      - if: steps.signing.outputs.ok == 'true'
+        uses: actions/checkout@v4
+      - if: steps.signing.outputs.ok == 'true'
+        uses: dtolnay/rust-toolchain@1.93
+        with:
+          targets: wasm32-unknown-unknown,aarch64-linux-android,armv7-linux-androideabi
+      - if: steps.signing.outputs.ok == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: steps.signing.outputs.ok == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - if: steps.signing.outputs.ok == 'true'
+        name: NDK, binaryen, wasm-bindgen, the web UI
+        run: |
+          corepack enable
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          sudo apt-get update && sudo apt-get install -y binaryen
+          cargo install --locked wasm-bindgen-cli --version 0.2.129
+          cd ui && pnpm install --frozen-lockfile && pnpm wasm && pnpm build
+      - if: steps.signing.outputs.ok == 'true'
+        name: Signing key
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cat > apps/tauri/src-tauri/gen/android/keystore.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+      - if: steps.signing.outputs.ok == 'true'
+        name: Signed APKs (arm64, armv7)
+        run: |
+          cd apps/tauri && ../../ui/node_modules/.bin/tauri android build --apk --split-per-abi --target aarch64 --target armv7
+          mkdir -p ../../out
+          o=src-tauri/gen/android/app/build/outputs/apk
+          cp $o/arm64/release/*.apk "../../out/jess-notes-${GITHUB_REF_NAME#v}-arm64.apk"
+          cp $o/arm/release/*.apk "../../out/jess-notes-${GITHUB_REF_NAME#v}-armv7.apk"
+      - if: steps.signing.outputs.ok == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/*
+
+  release:
+    needs: [manifest, linux, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$v"
+          printf '\n**Server image:** `%s` (amd64, arm64). Install: see [docs/COOLIFY.md](https://github.com/%s/blob/%s/docs/COOLIFY.md) or [docs/DEPLOY.md](https://github.com/%s/blob/%s/docs/DEPLOY.md).\n' \
+            "$image" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> notes.md
+          cat notes.md
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "Jess Notes ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*

@@ -1,0 +1,25 @@
+# Jess Notes on Coolify (docs/COOLIFY.md): New Resource → Docker Compose Empty → paste this file
+# → Deploy. Coolify then
+#   - gives the service a domain with HTTPS and routes it to port 8080 (SERVICE_FQDN_JESS_8080;
+#     change the domain on the service's settings page if you like),
+#   - creates the `jess-data` volume and keeps it across redeploys,
+#   - generates the vault password (SERVICE_PASSWORD_JESS: see the Environment Variables tab).
+services:
+  jess:
+    image: ghcr.io/dochmccrum/jess-notes:1
+    restart: unless-stopped
+    volumes:
+      - jess-data:/data
+    environment:
+      - SERVICE_FQDN_JESS_8080
+      # Used once, to create the account on first start. Changing it later has no effect; use
+      # `jess reset-password` in the container's terminal instead.
+      - JESS_ADMIN_PASSWORD=${SERVICE_PASSWORD_JESS}
+      - JESS_TRUST_PROXY=true
+      - RUST_LOG=info
+      # Optional: push your notes as plain files to a private git repository (docs/DEPLOY.md §5).
+      # - JESS_GIT_REMOTE=git@github.com:you/notes-backup.git
+    stop_grace_period: 30s
+
+volumes:
+  jess-data:

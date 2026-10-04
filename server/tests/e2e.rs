@@ -414,3 +414,53 @@ async fn blob_facts_propagate() {
     let (c2, _) = jess_core::client::Client::load(b.kv.clone(), 99, jess_core::blobs::CHUNK_SIZE);
     assert_eq!(c2.blob_facts(&h).and_then(|f| f.height), Some(480));
 }
+
+/// A signed-in device changes the vault password with the current one; the old one stops working,
+/// the new one signs in, and other devices stay signed in.
+#[test]
+fn change_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start_env(
+        dir.path(),
+        free_port(),
+        &[("JESS_LOGIN_RATE_PER_MINUTE", "1000")],
+    );
+    let token = srv.login("A");
+    let other = srv.login("B");
+    let change = |tok: &str, current: &str, new: &str| {
+        ureq::post(&srv.url("/api/auth/password"))
+            .header("authorization", &format!("Bearer {tok}"))
+            .send_json(serde_json::json!({ "current": current, "new": new }))
+    };
+    assert!(matches!(
+        change(&token, "wrong", "a new password"),
+        Err(ureq::Error::StatusCode(401))
+    ));
+    assert!(matches!(
+        change(&token, common::PASSWORD, "short"),
+        Err(ureq::Error::StatusCode(400))
+    ));
+    assert!(matches!(
+        change("not-a-token", common::PASSWORD, "a new password"),
+        Err(ureq::Error::StatusCode(401))
+    ));
+    assert_eq!(
+        change(&token, common::PASSWORD, "a new password")
+            .unwrap()
+            .status(),
+        200
+    );
+    let login = |pw: &str| {
+        ureq::post(&srv.url("/api/auth/login")).send_json(serde_json::json!({ "password": pw }))
+    };
+    assert!(login(common::PASSWORD).is_err());
+    assert_eq!(login("a new password").unwrap().status(), 200);
+    assert_eq!(
+        ureq::get(&srv.url("/api/devices"))
+            .header("authorization", &format!("Bearer {other}"))
+            .call()
+            .unwrap()
+            .status(),
+        200
+    );
+}

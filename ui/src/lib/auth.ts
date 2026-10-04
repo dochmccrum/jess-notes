@@ -87,3 +87,5 @@ export const createPairing = (token: string) => request<{ code: string; expires_
 export const listDevices = (token: string) => request<{ id: string; name: string; last_seen: number | null; revoked_at: number | null }[]>('GET', '/api/devices', undefined, token)
 
 export const revokeDevice = (token: string, id: string) => request<unknown>('POST', `/api/devices/${id}/revoke`, undefined, token)
+
+export const changePassword = (token: string, current: string, next: string) => request<unknown>('POST', '/api/auth/password', { current, new: next }, token)

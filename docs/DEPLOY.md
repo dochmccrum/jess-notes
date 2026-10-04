@@ -1,7 +1,8 @@
 # Deploying Jess Notes
 
 One container, one port (8080), one volume (`/data`). The server also serves the web app, so
-there is nothing else to deploy. These steps assume **Coolify** with its bundled Traefik
+there is nothing else to deploy. The image is `ghcr.io/dochmccrum/jess-notes` (amd64 and arm64;
+tags `1`, `1.0`, `1.0.0`, `latest`). `docker build .` builds the same from source. These steps assume **Coolify** with its bundled Traefik
 (which terminates TLS), but any Docker host behind an HTTPS reverse proxy works the same way.
 **Step-by-step Coolify instructions are in [COOLIFY.md](COOLIFY.md)**; this file is the reference.
 
@@ -37,8 +38,12 @@ provides. The mirror can always be rebuilt (`jess rebuild-mirror`).
 
 ## 2. Coolify
 
-1. **New resource → Public/Private repository** (this repo) → build pack **Dockerfile**.
-   (Or **Docker Compose** with `docker-compose.yml`; both work.)
+The quickest way is the compose file made for Coolify: *New Resource → Docker Compose Empty*, paste
+[`docker-compose.coolify.yml`](../docker-compose.coolify.yml), and deploy. It sets the domain,
+port, volume and a generated password; see [COOLIFY.md](COOLIFY.md). The steps below are for
+building from the repository with the **Dockerfile** build pack instead.
+
+1. **New resource → Public repository** (this repo, or your fork) → build pack **Dockerfile**.
 2. **Ports**: expose `8080`. Attach your domain, e.g. `https://notes.example.com`; Coolify
    configures Traefik and Let's Encrypt.
 3. **Storage**: add a persistent volume mounted at `/data`. *Without it every redeploy starts an
@@ -94,6 +99,7 @@ Coolify's Traefik defaults work: WebSockets are passed through, and attachments 
 - **Another device without typing the password**: Settings → *Pair a device…* shows a link that
   is valid for 10 minutes and works once.
 - Lost a device? Revoke it in Settings → Devices; it is disconnected immediately.
+- Change the password: *Settings → Password* on any signed-in device (other devices stay signed in).
 - Forgot the password? On the server: `docker exec -it <container> jess reset-password`
   (reads the new password from stdin or `JESS_NEW_PASSWORD`; existing devices stay signed in).
 
@@ -170,6 +176,8 @@ guess, so nothing is silently lost. To bring such a device back:
 
 ## 7. Updating
 
-Redeploy in Coolify. The database schema migrates forward automatically on start; the web app
+Pull the new image and restart it: *Redeploy* in Coolify, or `docker compose pull && docker compose up -d`.
+The `:1` tag follows the newest 1.x release; pin `:1.0.0` to stay put. The database schema
+migrates forward automatically on start; the web app
 updates itself on the next load (the service worker fetches the new version and uses it after a
 reload).

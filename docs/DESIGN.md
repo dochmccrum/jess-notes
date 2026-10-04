@@ -885,7 +885,7 @@ phase 7. Nothing already built changes: the shared mobile entry point stays for 
 **Plan change (owner, 2026-10-01):** phase 6.5 added: flawless 120 Hz on every platform, with
 the frame-pacing work it needs (§23). Phase 7 (performance + polish) follows it.
 
-Each phase ends with tests passing, a commit pushed to `origin/main` (github.com/dochmccrum/jess-notes, private), and a short summary in `docs/PHASES.md`.
+Each phase ends with tests passing, a commit pushed to `origin/main` (github.com/dochmccrum/jess-notes), and a short summary in `docs/PHASES.md`.
 
 ---
 
@@ -1352,6 +1352,22 @@ each tightens a rule the simulation showed was underspecified.
 84. **A relaunched Linux app waits 500 ms if X refused it at first.** After a relaunch the X
     display can briefly refuse connections while the previous instance's processes let go of
     theirs. CI once saw CEF fail to create the window right after the display answered.
+85. **Changing the password.** `POST /api/auth/password {current, new}` from a signed-in device
+    (*Settings → Password*). It needs the current password, is rate-limited like sign-in, and
+    needs a new one of 8+ characters. Other devices stay signed in, as with
+    `jess reset-password`: a stolen device is revoked, not logged out by a password change. It
+    is there for public self-hosting, where the first password may be generated (item 86).
+86. **Packaging for v1.0.**
+    - A `v*` tag publishes the image to `ghcr.io/<owner>/jess-notes` (amd64 and arm64, built
+      natively on each runner; tags `X.Y.Z`, `X.Y`, `X`, `latest`).
+    - The same tag publishes the Linux `.deb` and AppImage, and signed Android APKs when the
+      signing secrets are set, on a GitHub release with the version's `CHANGELOG.md` notes.
+    - `docker-compose.yml` runs the published image anywhere. `docker-compose.coolify.yml` uses
+      Coolify's magic variables, so a Coolify install is paste-and-deploy: `SERVICE_FQDN_JESS_8080`
+      for the domain and port, a declared volume Coolify keeps, and `SERVICE_PASSWORD_JESS` as
+      `JESS_ADMIN_PASSWORD`.
+    - The web worker reports `ui/package.json`'s version, the native side the crate's: one
+      version, 1.0.0, in `Cargo.toml` and `ui/package.json`.
 
 ---
 

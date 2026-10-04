@@ -49,3 +49,37 @@ test('first-run setup with the setup code, then maths renders', async ({ page })
     child.kill('SIGTERM')
   }
 })
+
+// Its own server: changing the shared e2e vault's password could break later tests.
+test('change the vault password in Settings', async ({ page, browser }) => {
+  const port = 18900 + Math.floor(Math.random() * 90)
+  const bin = process.env.JESS_BIN ?? '../target/debug/jess'
+  const child = spawn(bin, ['serve'], {
+    env: { ...process.env, JESS_DATA_DIR: mkdtempSync(join(tmpdir(), 'jess-pw-')), PORT: String(port), JESS_UI_DIR: 'dist', RUST_LOG: 'warn', JESS_ADMIN_PASSWORD: 'the first password', JESS_LOGIN_RATE_PER_MINUTE: '1000' },
+  })
+  try {
+    const base = `http://127.0.0.1:${port}`
+    const signIn = async (p: typeof page, pw: string) => {
+      await expect.poll(async () => (await fetch(`${base}/healthz`).catch(() => null))?.ok ?? false, { timeout: 15_000 }).toBe(true)
+      await p.goto(base)
+      await p.getByTestId('password').fill(pw)
+      await p.getByRole('button', { name: 'Sign in' }).click()
+      await expect(p.getByTestId('sync-status')).toHaveText(/Synced/, { timeout: 15_000 })
+    }
+    await signIn(page, 'the first password')
+    await page.getByTestId('open-settings').click()
+    const form = page.getByTestId('change-password')
+    await form.getByLabel('Current password').fill('wrong one')
+    await form.getByLabel('New password', { exact: true }).fill('a whole new password')
+    await form.getByLabel('New password again').fill('a whole new password')
+    await form.getByRole('button', { name: 'Change password' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'current password is wrong' })).toBeVisible()
+    await form.getByLabel('Current password').fill('the first password')
+    await form.getByRole('button', { name: 'Change password' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Password changed' })).toBeVisible()
+    // Another device signs in with the new one.
+    await signIn(await (await browser.newContext()).newPage(), 'a whole new password')
+  } finally {
+    child.kill('SIGTERM')
+  }
+})

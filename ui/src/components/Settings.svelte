@@ -1,7 +1,7 @@
 <script lang="ts">
   import Modal from './Modal.svelte'
   import type { AppState } from '../stores/app.svelte'
-  import { createPairing, getServer, getToken, listDevices, revokeDevice, setToken } from '../lib/auth'
+  import { changePassword, createPairing, getServer, getToken, listDevices, revokeDevice, setToken } from '../lib/auth'
   import { bindingsFor, get as getCommand } from '../lib/commands'
   import { applyTheme } from '../lib/theme'
   import { requestErase } from '../lib/erase'
@@ -36,6 +36,23 @@
     if (!token) return
     const r = await createPairing(token)
     pair = { link: `${(await getServer()) ?? location.origin}/#pair=${r.code}`, expires: r.expires_at }
+  }
+
+  let pw = $state({ current: '', next: '', again: '' })
+  let pwMsg: { ok: boolean; text: string } | null = $state(null)
+  async function savePassword(e: SubmitEvent) {
+    e.preventDefault()
+    if (!token) return
+    if (pw.next.length < 8) return void (pwMsg = { ok: false, text: 'The new password needs at least 8 characters.' })
+    if (pw.next !== pw.again) return void (pwMsg = { ok: false, text: 'The new passwords don’t match.' })
+    try {
+      await changePassword(token, pw.current, pw.next)
+      pw = { current: '', next: '', again: '' }
+      pwMsg = { ok: true, text: 'Password changed. Signed-in devices stay signed in.' }
+    } catch (err) {
+      const m = (err as Error).message
+      pwMsg = { ok: false, text: m === '429' ? 'Too many attempts: try again in a minute.' : m === 'wrong password' ? 'The current password is wrong.' : `Couldn’t change it: ${m}` }
+    }
   }
 
   async function revoke(id: string) {
@@ -116,6 +133,16 @@
       {/await}
     {/if}
   </section>
+  <section>
+    <h3>Password</h3>
+    <form class="password" onsubmit={savePassword} data-testid="change-password">
+      <input type="password" autocomplete="current-password" placeholder="Current password" bind:value={pw.current} aria-label="Current password" />
+      <input type="password" autocomplete="new-password" placeholder="New password (8+ characters)" bind:value={pw.next} aria-label="New password" />
+      <input type="password" autocomplete="new-password" placeholder="New password again" bind:value={pw.again} aria-label="New password again" />
+      <button class="btn" type="submit" disabled={!pw.current || !pw.next}>Change password</button>
+    </form>
+    {#if pwMsg}<p class="small" class:muted={pwMsg.ok} role="status">{pwMsg.text}</p>{/if}
+  </section>
   {/if}
   {#if quarantine.length}
     <section>
@@ -183,6 +210,12 @@
     flex-direction: row;
     align-items: center;
     gap: 8px;
+  }
+  .password {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 320px;
   }
   .devices {
     list-style: none;

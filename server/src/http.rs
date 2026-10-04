@@ -130,6 +130,7 @@ pub fn router(app: Shared) -> Router {
         .route("/api/auth/pair", post(auth_pair))
         .route("/api/auth/redeem", post(auth_redeem))
         .route("/api/auth/logout", post(auth_logout))
+        .route("/api/auth/password", post(auth_password))
         .route("/api/devices", get(devices_list))
         .route("/api/devices/{id}/revoke", post(devices_revoke))
         .route("/api/sync", get(sync_ws).post(sync_http))
@@ -591,6 +592,68 @@ async fn auth_login(
         return err(StatusCode::UNAUTHORIZED, "wrong password");
     }
     issue_token(&app, req.device_name.unwrap_or_else(|| "Device".into())).await
+}
+
+#[derive(Deserialize)]
+struct PasswordReq {
+    current: String,
+    new: String,
+}
+
+/// `POST /api/auth/password`: a signed-in device changes the vault password, given the current
+/// one (rate-limited like sign-in). Other devices stay signed in, as with `jess reset-password`.
+async fn auth_password(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<PasswordReq>,
+) -> Response {
+    if app.device(&headers).is_none() {
+        return unauthorized();
+    }
+    if req.new.chars().count() < 8 {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "the new password needs at least 8 characters",
+        );
+    }
+    let now = now_ms();
+    let ip = client_ip(&app, &headers, peer);
+    if let Err(ms) = app.limiter.lock().expect("lock").check(ip, now) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("retry-after", ((ms / 1000) + 1).to_string())],
+            "too many attempts",
+        )
+            .into_response();
+    }
+    let phc = app
+        .writer
+        .call(|e| auth::account_hash(&e.conn).ok().flatten())
+        .await;
+    let (current, new) = (req.current, req.new);
+    let hashed = tokio::task::spawn_blocking(move || match phc {
+        Some(h) if auth::verify_password(&current, &h) => Some(auth::hash_password(&new)),
+        _ => None,
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(phc) = hashed else {
+        app.limiter.lock().expect("lock").failed(now);
+        return err(StatusCode::UNAUTHORIZED, "wrong password");
+    };
+    match app
+        .writer
+        .call(move |e| auth::set_password(&e.conn, &phc, false, now))
+        .await
+    {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(_) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not save the password",
+        ),
+    }
 }
 
 async fn auth_pair(State(app): State<Shared>, headers: HeaderMap) -> Response {

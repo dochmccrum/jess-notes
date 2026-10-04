@@ -117,6 +117,7 @@ never evicted locally before that.
 `GET /api/auth/state` · `POST /api/auth/setup {password, setup_code?, device_name?}` ·
 `POST /api/auth/login {password, device_name?}` → `{token, device_id, vault_id}` ·
 `POST /api/auth/pair` (bearer) → `{code, expires_at}` · `POST /api/auth/redeem {code, device_name?}` ·
+`POST /api/auth/password {current, new}` (bearer; new ≥ 8 characters, rate-limited like login) ·
 `POST /api/auth/logout` · `GET /api/devices` · `POST /api/devices/{id}/revoke`.
 Admin: `GET /api/admin/status`, `GET /api/admin/snapshot/latest`. Health: `GET /healthz`.
 
