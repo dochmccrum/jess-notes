@@ -250,25 +250,44 @@ export class PdfViewer {
       this.sizeSlot(s)
     }
     const dpr = Math.min(window.devicePixelRatio || 1, coarse ? 2 : 3)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.floor(vp.width * dpr)
-    canvas.height = Math.floor(vp.height * dpr)
-    canvas.style.width = `${Math.floor(vp.width)}px`
-    canvas.style.height = `${Math.floor(vp.height)}px`
+    const paint = async (ratio: number) => {
+      const c = document.createElement('canvas')
+      c.width = Math.floor(vp.width * ratio)
+      c.height = Math.floor(vp.height * ratio)
+      c.style.width = `${Math.floor(vp.width)}px`
+      c.style.height = `${Math.floor(vp.height)}px`
+      s.task = page.render({ canvas: c, canvasContext: c.getContext('2d')!, viewport: vp, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined })
+      try {
+        await s.task.promise
+      } catch {
+        c.width = c.height = 0
+        return null // cancelled
+      }
+      s.task = null
+      return c
+    }
+    // The document's first page paints at 1× first (a quarter of the pixels at 2×: what a
+    // high-DPI screen waited for, SPEC <300 ms), then again at full sharpness.
+    const quick = dpr > 1 && !!this.opts.onFirstPage
     const textDiv = document.createElement('div')
     textDiv.className = 'textLayer'
-    s.el.replaceChildren(canvas, textDiv)
-    s.task = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined })
-    try {
-      await s.task.promise
-    } catch {
-      return // cancelled
-    }
-    s.task = null
-    if (!s.live) return
+    const holder = document.createElement('canvas')
+    holder.width = holder.height = 0
+    holder.style.width = `${Math.floor(vp.width)}px`
+    holder.style.height = `${Math.floor(vp.height)}px`
+    s.el.replaceChildren(holder, textDiv)
+    const canvas = await paint(quick ? 1 : dpr)
+    if (!canvas || !s.live) return
+    holder.replaceWith(canvas)
     if (this.opts.onFirstPage) {
       this.opts.onFirstPage()
       this.opts.onFirstPage = undefined
+    }
+    if (quick) {
+      const sharp = await paint(dpr)
+      if (!sharp || !s.live) return
+      canvas.replaceWith(sharp)
+      canvas.width = canvas.height = 0
     }
     textDiv.style.setProperty('--scale-factor', String(this.scale))
     s.text = new TextLayer({ textContentSource: page.streamTextContent(), container: textDiv, viewport: vp })

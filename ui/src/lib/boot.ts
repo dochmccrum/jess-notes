@@ -26,7 +26,9 @@ export async function readBoot(): Promise<BootRecord | null> {
 
 export async function writeBoot(b: BootRecord): Promise<void> {
   try {
-    if (isTauri) return await tauriInvoke('meta_put', { key: 'boot', value: JSON.stringify({ ...b, doc: null }) })
+    // The native side builds the record from its view (`save_boot`): stringifying the entries here
+    // took ~100 ms of the main thread at 30k entries.
+    if (isTauri) return await tauriInvoke('save_boot', { lastNote: b.lastNote })
     const db = await openDb()
     await metaPut(db, 'boot', b)
   } catch {

@@ -365,6 +365,17 @@ impl Native {
         let _ = st.store.meta_put(k, v.map(str::as_bytes));
     }
 
+    /// The UI's cold-start record (DESIGN §11.7) under `ui:boot`: built here from the view, not by
+    /// the UI's main thread (`JSON.stringify` of 30k entries took ~100 ms there).
+    pub fn save_boot(&self, last_note: Option<&str>, now: u64) {
+        let st = self.inner.st.lock().expect("lock");
+        let last = serde_json::to_string(&last_note).unwrap_or_else(|_| "null".into());
+        let entries = jess_core::json::view_json(&st.client);
+        let rec =
+            format!("{{\"lastNote\":{last},\"entries\":{entries},\"doc\":null,\"at\":{now}}}");
+        let _ = st.store.meta_put("ui:boot", Some(rec.as_bytes()));
+    }
+
     pub fn status(&self) -> Value {
         let st = self.inner.st.lock().expect("lock");
         self.status_locked(&st)

@@ -136,6 +136,17 @@ fn meta_put(key: String, value: Option<String>, app: State<'_, App>) -> Result<(
     Ok(())
 }
 
+/// Writes the cold-start record from the native view (async: off the main thread).
+#[tauri::command]
+async fn save_boot(last_note: Option<String>, app: State<'_, App>) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    app.n()?.save_boot(last_note.as_deref(), now);
+    Ok(())
+}
+
 #[tauri::command]
 async fn http_json(
     method: String,
@@ -817,6 +828,7 @@ pub fn run() {
             set_token,
             meta_get,
             meta_put,
+            save_boot,
             http_json,
             quarantine,
             set_foreground,

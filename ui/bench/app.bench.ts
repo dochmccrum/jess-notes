@@ -75,6 +75,21 @@ async function inputToPaint(p: Page, act: () => Promise<void>, done: (arg: strin
   return end - start
 }
 
+/** Main-thread tasks of 1 ms or more while `action` runs, from a Chrome trace (`toplevel`,
+ *  `blink`: as e2e/smoothness.spec.ts; the idle scheduler's tiny tasks would dilute a p99). */
+async function traceTasks(p: Page, action: () => Promise<void>): Promise<number[]> {
+  const cdp = await ctx.newCDPSession(p)
+  const events: Parameters<typeof mainThreadTasks>[0] = []
+  cdp.on('Tracing.dataCollected', (d) => events.push(...(d.value as unknown as typeof events)))
+  const traced = new Promise((r) => cdp.once('Tracing.tracingComplete', r))
+  await cdp.send('Tracing.start', { categories: 'toplevel,blink', transferMode: 'ReportEvents' })
+  await action()
+  await cdp.send('Tracing.end')
+  await traced
+  await cdp.detach()
+  return mainThreadTasks(events).filter((t) => t >= 1)
+}
+
 test('setup: sign in, sync the vault, download every attachment', async ({ baseURL }) => {
   // A persistent profile on disk: an incognito context keeps IndexedDB in memory with a small
   // quota, which the vault's ~1 GB of attachments exceeds (the app then falls back to on-demand).
@@ -229,47 +244,39 @@ test('typing latency in a 1 MB note, a maths note, and one with 30 images and 3 
     await page.locator('.cm-content').click()
     await page.keyboard.press('Control+Home')
     await page.keyboard.press('End')
-    await page.evaluate(() => {
-      const w = window as unknown as { __ev: Map<number, number>; __loaf: number[]; __obs: PerformanceObserver[] }
-      w.__ev = new Map()
-      w.__loaf = []
-      w.__obs?.forEach((o) => o.disconnect())
-      const ev = new PerformanceObserver((l) => {
-        for (const e of l.getEntries() as (PerformanceEntry & { interactionId: number })[]) if (e.interactionId) w.__ev.set(e.interactionId, Math.max(w.__ev.get(e.interactionId) ?? 0, e.duration))
-      })
-      ev.observe({ type: 'event', durationThreshold: 16, buffered: false } as PerformanceObserverInit)
-      const lo = new PerformanceObserver((l) => {
-        for (const e of l.getEntries() as (PerformanceEntry & { blockingDuration: number; scripts: { invoker: string; duration: number; sourceURL: string; sourceFunctionName: string }[] })[]) {
-          w.__loaf.push(e.duration)
-          if (e.duration > 50) console.log(`long frame ${Math.round(e.duration)} ms (blocking ${Math.round(e.blockingDuration)}): ${e.scripts.map((s) => `${s.invoker} ${Math.round(s.duration)} ms ${s.sourceFunctionName}@${s.sourceURL.split('/').pop()}`).join('; ') || 'no scripts'}`)
-        }
-      })
-      try {
-        lo.observe({ type: 'long-animation-frame', buffered: false })
-      } catch {
-        /* no LoAF */
-      }
-      w.__obs = [ev, lo]
-    })
     const n = 200
-    // Main-thread tasks from a trace (`toplevel`, `blink`: as e2e/smoothness.spec.ts).
-    const cdp = await ctx.newCDPSession(page)
-    const events: Parameters<typeof mainThreadTasks>[0] = []
-    cdp.on('Tracing.dataCollected', (d) => events.push(...(d.value as typeof events)))
-    const traced = new Promise((r) => cdp.once('Tracing.tracingComplete', r))
-    await cdp.send('Tracing.start', { categories: 'toplevel,blink', transferMode: 'ReportEvents' })
-    await page.keyboard.type(' typing latency probe text '.repeat(8).slice(0, n), { delay: 25 })
-    await page.waitForTimeout(500)
-    await cdp.send('Tracing.end')
-    await traced
-    await cdp.detach()
+    const tasks = await traceTasks(page, async () => {
+      // Observed from here: starting a trace can itself make a long frame.
+      await page.evaluate(() => {
+        const w = window as unknown as { __ev: Map<number, number>; __loaf: number[]; __obs: PerformanceObserver[] }
+        w.__ev = new Map()
+        w.__loaf = []
+        w.__obs?.forEach((o) => o.disconnect())
+        const ev = new PerformanceObserver((l) => {
+          for (const e of l.getEntries() as (PerformanceEntry & { interactionId: number })[]) if (e.interactionId) w.__ev.set(e.interactionId, Math.max(w.__ev.get(e.interactionId) ?? 0, e.duration))
+        })
+        ev.observe({ type: 'event', durationThreshold: 16, buffered: false } as PerformanceObserverInit)
+        const lo = new PerformanceObserver((l) => {
+          for (const e of l.getEntries() as (PerformanceEntry & { blockingDuration: number; scripts: { invoker: string; duration: number; sourceURL: string; sourceFunctionName: string }[] })[]) {
+            w.__loaf.push(e.duration)
+            if (e.duration > 50) console.log(`long frame ${Math.round(e.duration)} ms (blocking ${Math.round(e.blockingDuration)}): ${e.scripts.map((s) => `${s.invoker} ${Math.round(s.duration)} ms ${s.sourceFunctionName}@${s.sourceURL.split('/').pop()}`).join('; ') || 'no scripts'}`)
+          }
+        })
+        try {
+          lo.observe({ type: 'long-animation-frame', buffered: false })
+        } catch {
+          /* no LoAF */
+        }
+        w.__obs = [ev, lo]
+      })
+      await page.keyboard.type(' typing latency probe text '.repeat(8).slice(0, n), { delay: 25 })
+      await page.waitForTimeout(500)
+    })
     const { slow, loafs } = await page.evaluate(() => {
       const w = window as unknown as { __ev: Map<number, number>; __loaf: number[] }
       return { slow: [...w.__ev.values()], loafs: w.__loaf }
     })
-    // What the app does per keystroke: main-thread tasks of 1 ms or more (the idle scheduler's
-    // tiny tasks would dilute the p99). The §18 target (p99 < 16 ms) applies to these.
-    const tasks = mainThreadTasks(events).filter((t) => t >= 1)
+    // What the app does per keystroke; the §18 target (p99 < 16 ms) applies to these.
     record(`typing_p99_${key}_ms`, quantile(tasks.length ? tasks : [0], 0.99), 'ms')
     // Event Timing: input to the next paint, frame wait included. Headless Chromium presents a
     // frame 1–2 frames late even for a one-line note (DESIGN §22 item 71), so it's tracked here
@@ -303,8 +310,20 @@ test('tree: expand a folder with 5,000 children', async () => {
       ),
     )
   }
-  await big.click()
   record('tree_expand_5000_ms', median(xs.slice(1)), 'ms', xs)
+  // Scrolling through the 5,000 (the tree is virtualised): wheel steps at 60 Hz for 2 s.
+  if ((await big.getAttribute('aria-expanded')) !== 'true') await big.click()
+  const tree = page.getByTestId('tree')
+  const tb = (await tree.boundingBox())!
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2)
+  const tasks = await traceTasks(page, async () => {
+    for (let i = 0; i < 120; i++) {
+      await page.mouse.wheel(0, 120)
+      await page.waitForTimeout(16)
+    }
+  })
+  record('tree_scroll_p99_ms', quantile(tasks.length ? tasks : [0], 0.99), 'ms')
+  await tree.evaluate((t) => (t.scrollTop = 0))
 })
 
 test('PDF first page: 5 MB (local) and 100 MB / 500 pages', async () => {

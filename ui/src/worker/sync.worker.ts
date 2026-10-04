@@ -4,7 +4,7 @@
 /// <reference lib="webworker" />
 import init, { Core, extract, Sha256, blobInfo as wasmBlobInfo } from '../wasm/core.js'
 import * as Y from 'yjs'
-import { openDb, loadAll, commit, scanPrefix, metaGet, putChunk, putChunks, getChunk, deleteChunks, journalAppend, journalAll, journalDelete, type JournalEntry, type Write } from './idb'
+import { openDb, loadAll, commit, scanPrefix, metaGet, metaPut, putChunk, putChunks, getChunk, deleteChunks, journalAppend, journalAll, journalDelete, type JournalEntry, type Write } from './idb'
 import { reconnectDelay } from './backoff'
 import type { Req, WorkerEvent, InitResult } from './protocol'
 import type { EntryMeta, Extracted, SyncStatus } from '../lib/types'
@@ -1041,6 +1041,12 @@ const methods: Record<string, (...a: never[]) => unknown> = {
   setForeground(f: boolean) {
     foreground = f
     if (f) probe()
+  },
+  /** The cold-start record (DESIGN §11.7), written here: at 30k entries cloning the snapshot
+   *  into IndexedDB took ~100 ms of the main thread, every 2 s after a change and on pagehide. */
+  async saveBoot(lastNote: string | null, doc: Uint8Array | null) {
+    if (!core) return
+    await metaPut(db, 'boot', { lastNote, entries: JSON.parse(core.viewJson()), doc, at: Date.now() })
   },
   online() {
     probe()

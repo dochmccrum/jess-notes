@@ -180,6 +180,10 @@ export class WebBackend implements Backend {
   setOfflineMode(mode: 'everything' | 'on-demand') {
     void this.call('setOfflineMode', mode)
   }
+  /** Writes the boot record in the worker, from core's view (see `saveBoot` there). */
+  saveBoot(lastNote: string | null, doc: Uint8Array | null) {
+    return this.call<void>('saveBoot', lastNote, doc)
+  }
   setForeground(f: boolean) {
     void this.call('setForeground', f)
   }

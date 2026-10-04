@@ -14,6 +14,9 @@ export class EntryStore {
   readonly entries = new Map<string, EntryMeta>()
   private kids = new Map<string | null, string[]>()
   private kidsDirty = new Set<string | null>()
+  /** Folders whose children are grouped but not sorted yet: sorted when first asked for, so a
+   *  cold start sorts what the tree shows, not 30k entries (~80 ms, ~330 ms on a slow CPU). */
+  private unsorted = new Set<string | null>()
   private visibleDocs = new Map<string, number>()
   private listeners = new Set<Listener>()
   readonly resolver = new Resolver()
@@ -30,6 +33,7 @@ export class EntryStore {
   load(list: EntryMeta[]) {
     this.entries.clear()
     this.kids.clear()
+    this.unsorted.clear()
     this.resolver.clear()
     for (const e of list) this.entries.set(e.id, e)
     for (const e of list) this.index(e)
@@ -77,6 +81,7 @@ export class EntryStore {
     this.switcher = null
     if (all) {
       this.kids.clear()
+    this.unsorted.clear()
       this.kidsDirty.clear()
     }
     for (const l of this.listeners) l(changed)
@@ -153,7 +158,7 @@ export class EntryStore {
 
   /** A folder is shown if it's empty or its subtree has a visible document. */
   folderShown(id: string): boolean {
-    const kids = this.liveChildren(id)
+    const kids = this.childIds(id)
     if (kids.length === 0) return true
     return this.countVisible(id) > 0
   }
@@ -162,9 +167,9 @@ export class EntryStore {
     const hit = this.visibleDocs.get(id)
     if (hit !== undefined) return hit
     let n = 0
-    for (const c of this.liveChildren(id)) {
+    for (const c of this.childIds(id)) {
       const e = this.entries.get(c)!
-      if (e.kind === 'folder') n += this.liveChildren(c).length === 0 ? 1 : this.countVisible(c)
+      if (e.kind === 'folder') n += this.childIds(c).length === 0 ? 1 : this.countVisible(c)
       else if (e.kind === 'markdown' || (e.kind === 'pdf' && e.visible) || this.showAllAttachments) n++
     }
     this.visibleDocs.set(id, n)
@@ -173,15 +178,25 @@ export class EntryStore {
 
   /** Live children sorted: folders first, natural order (cached per folder until it changes). */
   liveChildren(parent: string | null): string[] {
-    if (this.kids.has(parent) && !this.kidsDirty.has(parent)) return this.kids.get(parent)!
     if (this.kids.size === 0 && this.entries.size > 0) this.rebuildAllKids()
-    else {
-      const v: string[] = []
-      for (const e of this.entries.values()) if (e.parent === parent && !e.trashed && !e.purged && e.kind !== 'vault') v.push(e.id)
-      this.kids.set(parent, this.sortIds(v))
-      this.kidsDirty.delete(parent)
+    if (this.kids.has(parent) && !this.kidsDirty.has(parent)) {
+      const v = this.kids.get(parent)!
+      if (this.unsorted.delete(parent)) this.sortIds(v)
+      return v
     }
-    return this.kids.get(parent) ?? []
+    const v: string[] = []
+    for (const e of this.entries.values()) if (e.parent === parent && !e.trashed && !e.purged && e.kind !== 'vault') v.push(e.id)
+    this.kids.set(parent, this.sortIds(v))
+    this.kidsDirty.delete(parent)
+    this.unsorted.delete(parent)
+    return v
+  }
+
+  /** Live children in no particular order (counting doesn't need them sorted). */
+  private childIds(parent: string | null): string[] {
+    if (this.kids.size === 0 && this.entries.size > 0) this.rebuildAllKids()
+    if (this.kids.has(parent) && !this.kidsDirty.has(parent)) return this.kids.get(parent)!
+    return this.liveChildren(parent)
   }
 
   private rebuildAllKids() {
@@ -192,18 +207,20 @@ export class EntryStore {
       if (v) v.push(e.id)
       else m.set(e.parent, [e.id])
     }
-    this.kids = new Map([...m].map(([k, v]) => [k, this.sortIds(v)]))
+    this.kids = m
+    this.unsorted = new Set(m.keys())
     this.kidsDirty.clear()
   }
 
+  /** Sorts in place: folders first, then natural order (keys looked up once, not per compare). */
   private sortIds(v: string[]): string[] {
-    return v.sort((a, b) => {
-      const ea = this.entries.get(a)!
-      const eb = this.entries.get(b)!
-      const fa = ea.kind === 'folder' ? 0 : 1
-      const fb = eb.kind === 'folder' ? 0 : 1
-      return fa - fb || collator.compare(ea.name, eb.name) || (ea.name < eb.name ? -1 : ea.name > eb.name ? 1 : 0)
+    const keyed = v.map((id) => {
+      const e = this.entries.get(id)!
+      return { id, f: e.kind === 'folder' ? 0 : 1, n: e.name }
     })
+    keyed.sort((a, b) => a.f - b.f || collator.compare(a.n, b.n) || (a.n < b.n ? -1 : a.n > b.n ? 1 : 0))
+    for (let i = 0; i < v.length; i++) v[i] = keyed[i].id
+    return v
   }
 
   /** Tree children (visibility rules applied). */

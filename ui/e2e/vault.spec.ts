@@ -143,11 +143,17 @@ test('sidebar modes: shortcut and hover-reveal', async ({ page }) => {
   // Dwelling opens it.
   await page.mouse.move(2, 300)
   await expect.poll(async () => (await box())!.x, { timeout: 2000 }).toBe(0)
-  // Leaving it closes after the grace period, not before.
+  // Leaving it closes after the grace period (300 ms), not before. "Not before" is only
+  // checkable when the moves and the check fit well inside it: on a slow runner (WebKit on
+  // GitHub's) the synthetic moves alone can take longer.
   await page.mouse.move(100, 300)
+  const t1 = Date.now()
   await page.mouse.move(900, 300)
   await page.waitForTimeout(120)
-  expect((await box())!.x).toBe(0)
+  const x = (await box())!.x
+  const left = Date.now() - t1
+  if (left < 220) expect(x).toBe(0)
+  else console.log(`leaving took ${left} ms: not well inside the grace period, check skipped`)
   await expect.poll(async () => (await box())!.x + (await box())!.width, { timeout: 2000 }).toBeLessThanOrEqual(1)
 })
 

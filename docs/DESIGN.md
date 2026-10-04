@@ -1307,6 +1307,35 @@ each tightens a rule the simulation showed was underspecified.
     dies first its cursor hasn't moved, so it is pulled again. Edit → other device: ~35–50 ms.
 76. **`indexReady`.** The worker posts it once the search index has caught up after start, and
     `window.__jess.indexReady()` exposes it. The benchmarks use it to measure in a steady state.
+77. **Release binaries: fat LTO, one codegen unit, stripped** (workspace `[profile.release]`).
+
+    | binary | before | after |
+    |---|---|---|
+    | server | 19.3 MB | 10.4 MB |
+    | Linux app | 45.3 MB | 28.6 MB |
+    | Android arm64 library (spaces' embedded server included) | — | 21.4 MB |
+
+    Thin LTO saved nothing over stripping alone. Keeping symbol names would cost 1.4 MB on the
+    server; panic messages carry their location anyway. Release builds take about twice as long
+    (the Linux app ~4 min here), so the Android CI job (four release ABIs) gets 120 minutes.
+78. **A PDF's first page paints at 1×, then sharp.** On a high-DPI screen the document's first
+    page renders at device-pixel-ratio 1 first (a quarter of the pixels at 2×), then again at
+    full sharpness, swapped in when done. Playwright's WebKit (Desktop Safari, DPR 2): 600–850
+    → 230–250 ms, within the SPEC's 300 ms.
+79. **The nightly simulation runs in 8 shards** of 125k seeds, in parallel jobs. One sequential
+    run of 1M seeds took the runner past its limits ("lost communication with the server"), so
+    the nightly run proved nothing.
+80. **The boot record is written off the main thread.** On the web the worker writes it from
+    core's view (the page sends only the open note's id and Yjs state). In the apps, the
+    `save_boot` command builds it in Rust. Cloning or stringifying 30k entries had cost the main
+    thread ~100 ms (400 ms at 4× CPU throttle). That cost came 2 s after every change, and also
+    in `pagehide`, where it delayed a reload's next page.
+81. **The tree sorts a folder's children when it is first shown.** At start, entries are only
+    grouped by folder, and the sort compares precomputed keys. Deciding whether a folder is
+    shown (does its subtree hold a visible document?) counts children in any order. Before,
+    start-up sorted all 30k entries, the 20k attachments in folders nobody had opened included.
+    Reload → note visible on the 10k vault: 1× 172 → ~100 ms, 4× CPU throttle 1.07 s →
+    0.55 s.
 
 ---
 

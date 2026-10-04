@@ -37,15 +37,21 @@ jobs:
         run: CRASH_ITERS=20 cargo test -p jess-server --test crash
 
   simulation:
+    # 10k seeds on a push; nightly, 1M seeds in 8 parallel shards of 125k (one sequential run of
+    # 1M took the runner past its limits).
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(github.event_name == 'schedule' && '[0,1,2,3,4,5,6,7]' || '[0]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93
       - uses: Swatinem/rust-cache@v2
       - name: Deterministic simulation (10k seeds; 1M nightly in shards)
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then N=1000000; else N=10000; fi
-          SIM_SEEDS=$N cargo test --release -p jess-server --test sim -- --nocapture
+          if [ "${{ github.event_name }}" = "schedule" ]; then N=125000; else N=10000; fi
+          SIM_START=$(( ${{ matrix.shard }} * N )) SIM_SEEDS=$N cargo test --release -p jess-server --test sim -- --nocapture
 
   yjs-compat:
     runs-on: ubuntu-latest
@@ -204,7 +210,7 @@ jobs:
 
   android-app:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90 # green runs take 32–58 min
+    timeout-minutes: 120 # green runs took 32–58 min before fat LTO (four release ABIs); allow for it
     env:
       NDK_VERSION: 28.2.13676358
     steps:

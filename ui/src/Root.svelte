@@ -81,9 +81,11 @@
     })
     ;(window as unknown as { __jess?: object }).__jess = { back: () => a.back(), entryCount: () => a.entries.entries.size, indexReady: () => indexReady }
     const saveBoot = () => {
-      const snapshot = [...a.entries.entries.values()]
-      const doc = a.active ? (a.backend.docState?.(a.active) ?? null) : null
-      void writeBoot({ lastNote: a.active, entries: snapshot, doc: doc && doc.length <= BOOT_DOC_MAX ? doc : null, at: Date.now() })
+      const b = a.backend
+      if (b instanceof WebBackend) {
+        const doc = a.active ? b.docState(a.active) : null
+        void b.saveBoot(a.active, doc && doc.length <= BOOT_DOC_MAX ? doc : null).catch(() => {})
+      } else void writeBoot({ lastNote: a.active, entries: [], doc: null, at: Date.now() })
     }
     document.addEventListener('visibilitychange', () => {
       const fg = document.visibilityState === 'visible'

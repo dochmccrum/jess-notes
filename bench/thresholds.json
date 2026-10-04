@@ -20,6 +20,7 @@
     "typing_loaf_over_50ms_maths": { "max": 0, "label": "long frames > 50 ms typing, maths note" },
     "typing_loaf_over_50ms_media": { "max": 0, "label": "long frames > 50 ms typing, media note" },
     "tree_expand_5000_ms": { "max": 16, "label": "expand a folder with 5,000 children" },
+    "tree_scroll_p99_ms": { "max": 16, "label": "scroll through it: p99 main-thread task" },
     "pdf_first_page_ms": { "max": 300, "label": "5 MB PDF (local) → first page" },
     "large_pdf_first_page_ms": { "max": 1000, "label": "100 MB / 500-page PDF → first page" },
     "large_pdf_read_before_first_page_pct": { "max": 10, "label": "share of it read before the first page" },
