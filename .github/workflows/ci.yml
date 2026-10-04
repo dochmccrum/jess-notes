@@ -271,6 +271,10 @@ jobs:
           api-level: 33
           target: google_apis
           arch: x86_64
+          # The runner's 4 vCPUs: with the default 2, the emulator was slow enough for the
+          # launcher to stop responding and the WebView's DevTools socket to stall.
+          cores: 4
+          ram-size: 4096M
           disable-animations: true
           script: |
             adb install -r apps/tauri/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk

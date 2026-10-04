@@ -1348,7 +1348,11 @@ each tightens a rule the simulation showed was underspecified.
     GPU, 2 cores) it has hung since phase 6.6 right after printing the device, with no output,
     until the step's 20-minute limit; locally it passes. Playwright's adb and CDP connections
     have no timeout of their own, so they now get 60 s. A 15-minute watchdog, and any failure,
-    print the activity stack, the app's pid and the app's and WebView's last log lines.
+    print the activity stack, the app's pid and the app's and WebView's last log lines. Their
+    first run showed the cause: the app had restarted correctly, but the 2-core emulator was so
+    loaded that the Pixel Launcher raised "isn't responding" and the WebView's DevTools socket
+    stalled. The emulator now gets the runner's 4 cores and 4 GB, error dialogs are hidden,
+    and each attach gives up after 15 s and retries within 2 minutes.
 84. **A relaunched Linux app waits 500 ms if X refused it at first.** After a relaunch the X
     display can briefly refuse connections while the previous instance's processes let go of
     theirs. CI once saw CEF fail to create the window right after the display answered.

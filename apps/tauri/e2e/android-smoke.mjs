@@ -141,7 +141,8 @@ async function attach() {
   device ??= (await within(60_000, 'adb devices (Playwright)', _android.devices()))[0]
   if (!device) throw new Error('no Android device')
   const wv = await device.webView({ pkg: PKG }, { timeout: 20_000 })
-  return within(60_000, 'the WebView page (CDP)', wv.page())
+  // Short, so a stuck connection is retried (`restarting`) rather than waited out.
+  return within(15_000, 'the WebView page (CDP)', wv.page())
 }
 
 /** What the device was doing, for a failure on CI: the app's and the WebView's last log lines. */
@@ -201,7 +202,7 @@ async function restarting(action) {
       await detach()
       return null
     },
-    60_000,
+    120_000,
   )
   return page
 }
@@ -236,6 +237,8 @@ async function main() {
   console.log(`device: Android ${adb('shell', 'getprop', 'ro.build.version.release')}, ${adb('shell', 'getprop', 'ro.product.model')}`)
   // `input tap` counts as a stylus on emulators: Gboard would show its handwriting tutorial.
   adb('shell', 'settings', 'put', 'secure', 'stylus_handwriting_enabled', '0')
+  // CI's emulator is slow enough for system apps to raise "isn't responding" dialogs over ours.
+  adb('shell', 'settings', 'put', 'global', 'hide_error_dialogs', '1')
   adb('shell', 'pm', 'clear', PKG)
   console.log('launching')
   launch()
