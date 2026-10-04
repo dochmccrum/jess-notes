@@ -365,13 +365,13 @@ fn install(
         };
         let dst = derived_path(data, kind, h, png);
         let other = derived_path(data, kind, h, !png);
+        // No fsync per file: the caller syncs once per batch (`sync_derived`) before it records
+        // the rows (four fsyncs per image had made derivation ~300 ms a job instead of ~5 ms).
         let r = (|| -> std::io::Result<i64> {
             std::fs::create_dir_all(dst.parent().expect("parent"))?;
             let size = std::fs::metadata(&src)?.len() as i64;
-            std::fs::File::open(&src)?.sync_all()?;
             std::fs::rename(&src, &dst)?;
             let _ = std::fs::remove_file(&other);
-            crate::blobfs::fsync_dir(dst.parent().expect("parent"))?;
             Ok(size)
         })();
         match r {
@@ -380,6 +380,34 @@ fn install(
         }
     }
     rows
+}
+
+/// Makes every derived file written so far durable (`syncfs`), before their rows are recorded.
+pub fn sync_derived(data: &Path) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let dir = data.join("derived");
+    std::fs::create_dir_all(&dir)?;
+    let d = std::fs::File::open(&dir)?;
+    // SAFETY: a valid open descriptor for the duration of the call.
+    if unsafe { libc::syncfs(d.as_raw_fd()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+type Rows = Vec<(&'static str, &'static str, i64, Option<String>)>;
+
+fn record(conn: &rusqlite::Connection, done: &[(Hash, Job, Rows)]) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    for (h, job, rows) in done {
+        for (kind, status, size, error) in rows {
+            tx.execute(
+                "INSERT OR REPLACE INTO derived(hash, kind, status, version, size, error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![h.0.to_vec(), kind, status, job.version(), size, error],
+            )?;
+        }
+    }
+    tx.commit()
 }
 
 /// `jess derive-all`: derives everything pending now, several jobs at a time, offline (the server
@@ -429,7 +457,7 @@ pub fn derive_all(cfg: &crate::config::Config) -> Result<(u64, u64), String> {
                 .collect::<Vec<_>>()
                 .await
         });
-        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let mut ready = Vec::new();
         for (h, job, rows) in results {
             let Some(rows) = rows else {
                 skipped.insert(h);
@@ -440,15 +468,10 @@ pub fn derive_all(cfg: &crate::config::Config) -> Result<(u64, u64), String> {
             } else {
                 done += 1;
             }
-            for (kind, status, size, error) in &rows {
-                tx.execute(
-                    "INSERT OR REPLACE INTO derived(hash, kind, status, version, size, error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![h.0.to_vec(), kind, status, job.version(), size, error],
-                )
-                .map_err(|e| e.to_string())?;
-            }
+            ready.push((h, job, rows));
         }
-        tx.commit().map_err(|e| e.to_string())?;
+        sync_derived(&cfg.data_dir).map_err(|e| e.to_string())?;
+        record(&conn, &ready).map_err(|e| e.to_string())?;
         eprintln!("{done} derived, {failed} failed");
     }
 }
@@ -489,6 +512,8 @@ pub fn spawn(app: Shared) {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
             }
+            // A batch at a time: derive, one filesystem sync, one transaction for the rows.
+            let mut ready = Vec::new();
             for (h, job) in batch {
                 let blob = app.fs.path(&h);
                 if !blob.is_file() {
@@ -501,28 +526,24 @@ pub fn spawn(app: Shared) {
                 } else {
                     done += 1;
                 }
-                let v = job.version();
-                let r = app
-                    .writer
-                    .call(move |e| {
-                        for (kind, status, size, error) in &rows {
-                            e.conn.execute(
-                                "INSERT OR REPLACE INTO derived(hash, kind, status, version, size, error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                                params![h.0.to_vec(), kind, status, v, size, error],
-                            )?;
-                        }
-                        Ok::<_, rusqlite::Error>(())
-                    })
-                    .await;
-                if let Err(e) = r {
-                    tracing::warn!("recording derived rows failed: {e}");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-                app.set_status(
-                    "derive",
-                    json!({ "ok": true, "done": done, "failed": failed, "pdfium": pdfium_library().is_some(), "at": now_ms() }),
-                );
+                ready.push((h, job, rows));
             }
+            let d = data.clone();
+            let synced = tokio::task::spawn_blocking(move || sync_derived(&d)).await;
+            if !matches!(synced, Ok(Ok(()))) {
+                tracing::warn!("syncing derived files failed: {synced:?}");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+            let r = app.writer.call(move |e| record(&e.conn, &ready)).await;
+            if let Err(e) = r {
+                tracing::warn!("recording derived rows failed: {e}");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            app.set_status(
+                "derive",
+                json!({ "ok": true, "done": done, "failed": failed, "pdfium": pdfium_library().is_some(), "at": now_ms() }),
+            );
         }
     });
 }

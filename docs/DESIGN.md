@@ -1206,7 +1206,9 @@ each tightens a rule the simulation showed was underspecified.
     - `scripts/bench-check.mjs`, which compares the results with `bench/thresholds.json` (the
       §18 targets plus 10% for noise).
 
-    CI runs it as the `bench` job, and `scripts/ci-local.sh bench` runs it locally. How each
+    CI runs it as the `bench` job, and `scripts/ci-local.sh bench` runs it locally. The targets
+    are checked at 1× on the dev machine. GitHub's runners (shared 4-vCPU machines, 2–4× slower)
+    get 1.5×, and 2.5× for main-thread task metrics, as in the smoothness tests (§23). How each
     metric is measured:
     - Query → results (switcher, autocomplete, search) and tree expansion: from the input
       event's timestamp to the first frame painted after the DOM shows the result.
@@ -1219,9 +1221,9 @@ each tightens a rule the simulation showed was underspecified.
     The benchmark device uses a persistent profile on disk: an incognito context keeps
     IndexedDB in memory with a quota smaller than the vault's attachments. Chrome's IndexedDB
     also can't open its store when the profile path contains `..`. The server runs with git, the
-    mirror and derivation off (`JESS_DERIVE=false`), as if it were on its own machine: deriving
-    the 20k images' thumbnails takes the server's background loop most of an hour, and
-    `jess derive-all` (in parallel, offline) about 12 minutes here.
+    mirror and background derivation off (`JESS_DERIVE=false`), as if it were on its own
+    machine. Thumbnails and PDF text are made before the browser runs, with `jess derive-all`
+    (about a minute for the 20k images, item 82).
 64. **`jess import <folder|zip>`, and a server-side import ~50× faster.** The CLI runs the
     clients' planner offline (it refuses if a server answers on the port), for a first import
     on the server. `jess derive-all` then derives thumbnails and PDF text in parallel, instead
@@ -1336,6 +1338,20 @@ each tightens a rule the simulation showed was underspecified.
     start-up sorted all 30k entries, the 20k attachments in folders nobody had opened included.
     Reload → note visible on the 10k vault: 1× 172 → ~100 ms, 4× CPU throttle 1.07 s →
     0.55 s.
+82. **Derivation syncs once per batch.** Deriving an image takes ~5 ms. Each job used to cost
+    ~300 ms, nearly all fsyncs: each output file and its directory, then a transaction per row.
+    Now the server's loop (and `jess derive-all`, 8 jobs at a time) writes a batch's files,
+    makes them durable with one `syncfs`, and records the rows in one transaction, so a row is
+    still recorded only once its files are durable. 2,000 images: 6 s with `derive-all`. On a
+    server, a 20k-image import now gets its thumbnails in minutes, not about an hour.
+83. **The Android smoke test says why it stopped.** On GitHub's emulator (no window, software
+    GPU, 2 cores) it has hung since phase 6.6 right after printing the device, with no output,
+    until the step's 20-minute limit; locally it passes. Playwright's adb and CDP connections
+    have no timeout of their own, so they now get 60 s. A 15-minute watchdog, and any failure,
+    print the activity stack, the app's pid and the app's and WebView's last log lines.
+84. **A relaunched Linux app waits 500 ms if X refused it at first.** After a relaunch the X
+    display can briefly refuse connections while the previous instance's processes let go of
+    theirs. CI once saw CEF fail to create the window right after the display answered.
 
 ---
 

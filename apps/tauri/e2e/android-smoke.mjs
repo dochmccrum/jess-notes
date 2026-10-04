@@ -131,12 +131,39 @@ function zip(files) {
 }
 
 /** Attaches to the app's WebView (Playwright finds its DevTools socket through adb). */
+/** `p`, or an error after `ms`: Playwright's adb and CDP connections have no timeout of their own. */
+function within(ms, what, p) {
+  let t
+  return Promise.race([p, new Promise((_, rej) => (t = setTimeout(() => rej(new Error(`${what}: no answer in ${ms / 1000} s`)), ms)))]).finally(() => clearTimeout(t))
+}
+
 async function attach() {
-  device ??= (await _android.devices())[0]
+  device ??= (await within(60_000, 'adb devices (Playwright)', _android.devices()))[0]
   if (!device) throw new Error('no Android device')
   const wv = await device.webView({ pkg: PKG }, { timeout: 20_000 })
-  return wv.page()
+  return within(60_000, 'the WebView page (CDP)', wv.page())
 }
+
+/** What the device was doing, for a failure on CI: the app's and the WebView's last log lines. */
+function diagnose() {
+  const run = (...a) => {
+    try {
+      return adb(...a)
+    } catch (e) {
+      return `(${e.message})`
+    }
+  }
+  console.error('--- activities:\n' + run('shell', 'dumpsys activity activities | grep -E "ResumedActivity|mFocusedApp" | head -5'))
+  console.error('--- pid: ' + run('shell', 'pidof', PKG))
+  console.error('--- logcat (app, WebView, crashes):\n' + run('shell', 'logcat -d -t 400 | grep -iE "jessnotes|chromium|cr_|AndroidRuntime|FATAL|tauri|RustStdout" | tail -80'))
+}
+
+// The step that hangs used to hold the job until its 20-minute limit, saying nothing.
+setTimeout(() => {
+  console.error('FAILED: the smoke test took over 15 minutes')
+  diagnose()
+  process.exit(1)
+}, 15 * 60_000).unref()
 
 /** Launches the activity and returns the device's epoch ms just before (for cold-start timing). */
 function launch() {
@@ -210,7 +237,9 @@ async function main() {
   // `input tap` counts as a stylus on emulators: Gboard would show its handwriting tutorial.
   adb('shell', 'settings', 'put', 'secure', 'stylus_handwriting_enabled', '0')
   adb('shell', 'pm', 'clear', PKG)
+  console.log('launching')
   launch()
+  console.log('attaching to the WebView')
   let page = await attach()
   console.log(`WebView: ${await page.evaluate(() => /Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0])}`)
   // Frame pacing (DESIGN §23.4): the WebView follows the display; on a 120 Hz phone MainActivity
@@ -405,6 +434,7 @@ main()
   .then(() => (process.exitCode = 0))
   .catch((e) => {
     console.error('FAILED:', e.message)
+    diagnose()
     try {
       writeFileSync(join(tmp, 'fail.png'), execFileSync('adb', ['exec-out', 'screencap', '-p'], { timeout: 60_000 }))
       console.error(`screenshot: ${join(tmp, 'fail.png')}`)

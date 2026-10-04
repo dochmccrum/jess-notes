@@ -1,42 +1,153 @@
 {
-  "comment": "DESIGN §18 targets. A result fails when it exceeds `max` by more than `tolerance` (default 10 %). Entries without `max` are tracked only. `note` explains a target that isn't met yet.",
+  "comment": "DESIGN §18 targets. A result fails when it exceeds `max` by more than `tolerance` (default 10 %). Entries without `max` are tracked only. On GitHub's runners (shared 4-vCPU machines, 2–4× slower than a desktop) limits are multiplied by `ci.factor`, or by the metric's own factor; the targets themselves are checked at 1× on the dev machine (`scripts/bench.sh`), as the smoothness tests do (DESIGN §23).",
   "tolerance": 0.1,
+  "ci": {
+    "factor": 1.5,
+    "metrics": {
+      "typing_p99_large_ms": 2.5,
+      "typing_p99_maths_ms": 2.5,
+      "typing_p99_media_ms": 2.5,
+      "tree_scroll_p99_ms": 2.5
+    }
+  },
   "metrics": {
-    "cold_start_ms": { "max": 300, "label": "cold start → note visible (10k vault)" },
-    "cold_start_cpu4x_ms": { "label": "cold start, 4× CPU throttle (mid-range proxy)" },
-    "open_note_ms": { "max": 50, "label": "open note" },
-    "open_note_50_images_ms": { "max": 50, "label": "open a note with 50 images" },
-    "open_note_50_images_cls": { "max": 0, "label": "layout shift opening it (CLS)" },
-    "switcher_ms": { "max": 30, "label": "quick switcher: query → results" },
-    "autocomplete_ms": { "max": 30, "label": "wikilink autocomplete: query → results" },
-    "search_ms": { "max": 30, "label": "full-text search: query → results" },
-    "typing_p99_large_ms": { "max": 16, "label": "typing p99 main-thread task, 1 MB note" },
-    "typing_p99_maths_ms": { "max": 16, "label": "typing p99 main-thread task, maths note" },
-    "typing_p99_media_ms": { "max": 16, "label": "typing p99 main-thread task, 30 images + 3 PDFs" },
-    "typing_presented_p99_large_ms": { "label": "typing p99 input → paint (Event Timing; headless frames run late)" },
-    "typing_presented_p99_maths_ms": { "label": "typing p99 input → paint, maths note" },
-    "typing_presented_p99_media_ms": { "label": "typing p99 input → paint, media note" },
-    "typing_loaf_over_50ms_large": { "max": 0, "label": "long frames > 50 ms typing, 1 MB note" },
-    "typing_loaf_over_50ms_maths": { "max": 0, "label": "long frames > 50 ms typing, maths note" },
-    "typing_loaf_over_50ms_media": { "max": 0, "label": "long frames > 50 ms typing, media note" },
-    "tree_expand_5000_ms": { "max": 16, "label": "expand a folder with 5,000 children" },
-    "tree_scroll_p99_ms": { "max": 16, "label": "scroll through it: p99 main-thread task" },
-    "pdf_first_page_ms": { "max": 300, "label": "5 MB PDF (local) → first page" },
-    "large_pdf_first_page_ms": { "max": 1000, "label": "100 MB / 500-page PDF → first page" },
-    "large_pdf_read_before_first_page_pct": { "max": 10, "label": "share of it read before the first page" },
-    "large_pdf_js_heap_mb": { "label": "JS heap after paging through it" },
-    "sync_latency_p50_ms": { "max": 150, "label": "edit → other device, p50" },
-    "sync_latency_p99_ms": { "max": 1000, "label": "edit → other device, p99" },
-    "catch_up_200_ms": { "max": 500, "label": "catch up 200 remote changes" },
-    "import_5k_notes_s": { "max": 30, "label": "server import, 5k notes → usable" },
-    "import_full_vault_s": { "label": "server import, 10k notes + 20k images + 300 PDFs" },
-    "initial_sync_s": { "label": "new device: sign in → synced (10k notes)" },
-    "initial_download_s": { "label": "new device: every attachment downloaded (~1 GB)" },
-    "bundle_main_kb": { "max": 150, "label": "main bundle (gzip)" },
-    "bundle_codemirror_kb": { "label": "CodeMirror chunk (gzip)" },
-    "bundle_worker_wasm_kb": { "label": "sync worker + core WASM (gzip)" },
-    "bundle_sqlite_kb": { "label": "sqlite-wasm (gzip)" },
-    "server_apply_commit_p50_ms": { "label": "server apply + commit, p50 (5 clients typing)" },
-    "server_apply_commit_p99_ms": { "max": 20, "label": "server apply + commit, p99 (5 clients typing)" }
+    "cold_start_ms": {
+      "max": 300,
+      "label": "cold start → note visible (10k vault)"
+    },
+    "cold_start_cpu4x_ms": {
+      "label": "cold start, 4× CPU throttle (mid-range proxy)"
+    },
+    "open_note_ms": {
+      "max": 50,
+      "label": "open note"
+    },
+    "open_note_50_images_ms": {
+      "max": 50,
+      "label": "open a note with 50 images"
+    },
+    "open_note_50_images_cls": {
+      "max": 0,
+      "label": "layout shift opening it (CLS)"
+    },
+    "switcher_ms": {
+      "max": 30,
+      "label": "quick switcher: query → results"
+    },
+    "autocomplete_ms": {
+      "max": 30,
+      "label": "wikilink autocomplete: query → results"
+    },
+    "search_ms": {
+      "max": 30,
+      "label": "full-text search: query → results"
+    },
+    "typing_p99_large_ms": {
+      "max": 16,
+      "label": "typing p99 main-thread task, 1 MB note"
+    },
+    "typing_p99_maths_ms": {
+      "max": 16,
+      "label": "typing p99 main-thread task, maths note"
+    },
+    "typing_p99_media_ms": {
+      "max": 16,
+      "label": "typing p99 main-thread task, 30 images + 3 PDFs"
+    },
+    "typing_presented_p99_large_ms": {
+      "label": "typing p99 input → paint (Event Timing; headless frames run late)"
+    },
+    "typing_presented_p99_maths_ms": {
+      "label": "typing p99 input → paint, maths note"
+    },
+    "typing_presented_p99_media_ms": {
+      "label": "typing p99 input → paint, media note"
+    },
+    "typing_loaf_over_50ms_large": {
+      "max": 0,
+      "label": "long frames > 50 ms typing, 1 MB note"
+    },
+    "typing_loaf_over_50ms_maths": {
+      "max": 0,
+      "label": "long frames > 50 ms typing, maths note"
+    },
+    "typing_loaf_over_50ms_media": {
+      "max": 0,
+      "label": "long frames > 50 ms typing, media note"
+    },
+    "tree_expand_5000_ms": {
+      "max": 16,
+      "label": "expand a folder with 5,000 children"
+    },
+    "tree_scroll_p99_ms": {
+      "max": 16,
+      "label": "scroll through it: p99 main-thread task"
+    },
+    "pdf_first_page_ms": {
+      "max": 300,
+      "label": "5 MB PDF (local) → first page"
+    },
+    "large_pdf_first_page_ms": {
+      "max": 1000,
+      "label": "100 MB / 500-page PDF → first page"
+    },
+    "large_pdf_read_before_first_page_pct": {
+      "max": 10,
+      "label": "share of it read before the first page"
+    },
+    "large_pdf_js_heap_mb": {
+      "label": "JS heap after paging through it"
+    },
+    "sync_latency_p50_ms": {
+      "max": 150,
+      "label": "edit → other device, p50"
+    },
+    "sync_latency_p99_ms": {
+      "max": 1000,
+      "label": "edit → other device, p99"
+    },
+    "catch_up_200_ms": {
+      "max": 500,
+      "label": "catch up 200 remote changes"
+    },
+    "import_5k_notes_s": {
+      "max": 30,
+      "label": "server import, 5k notes → usable"
+    },
+    "import_full_vault_s": {
+      "label": "server import, 10k notes + 20k images + 300 PDFs"
+    },
+    "derive_all_s": {
+      "label": "server: thumbnails and PDF text for all of it (jess derive-all)"
+    },
+    "initial_sync_s": {
+      "label": "new device: sign in → synced (10k notes)"
+    },
+    "initial_download_s": {
+      "label": "new device: every attachment downloaded (~1 GB)"
+    },
+    "initial_download_stored_mb": {
+      "label": "  …stored in IndexedDB (compressed)"
+    },
+    "bundle_main_kb": {
+      "max": 150,
+      "label": "main bundle (gzip)"
+    },
+    "bundle_codemirror_kb": {
+      "label": "CodeMirror chunk (gzip)"
+    },
+    "bundle_worker_wasm_kb": {
+      "label": "sync worker + core WASM (gzip)"
+    },
+    "bundle_sqlite_kb": {
+      "label": "sqlite-wasm (gzip)"
+    },
+    "server_apply_commit_p50_ms": {
+      "label": "server apply + commit, p50 (5 clients typing)"
+    },
+    "server_apply_commit_p99_ms": {
+      "max": 20,
+      "label": "server apply + commit, p99 (5 clients typing)"
+    }
   }
 }

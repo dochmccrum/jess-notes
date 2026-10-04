@@ -1,11 +1,11 @@
 {
-  "comment": "Gzipped byte budgets (DESIGN §11.8). 'enforce' budgets fail CI; 'track' budgets only warn.",
+  "comment": "Gzipped byte budgets (DESIGN §11.8). 'enforce' budgets fail CI (the SPEC's critical path: main <150 KB). 'track' budgets only warn; they guard against growth. worker+wasm (DESIGN's ~300 KB estimate) is core's yrs, import/export zip, YAML frontmatter and Unicode tables plus Yjs, off the critical path since §22 item 69; sqlite is upstream sqlite-wasm.",
   "enforce": {
     "main": 153600
   },
   "track": {
     "codemirror": 174080,
-    "worker+wasm": 307200,
-    "sqlite": 409600
+    "worker+wasm": 491520,
+    "sqlite": 460800
   }
 }

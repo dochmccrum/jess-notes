@@ -87,12 +87,12 @@ test('a note with 50 images opens fast, without layout shift', async ({ page }) 
   await expect.poll(() => page.locator('.cm-content .jess-img img').first().evaluate((i: HTMLImageElement) => i.naturalWidth), { timeout: 10_000 }).toBe(400)
   expect(await page.locator('.jess-img-placeholder.offline').count()).toBe(0)
   console.log(`note with 50 images: ${opens.map((x) => x.toFixed(1)).join(', ')} ms`)
-  // GitHub's runners take 110–130 ms here in Chromium (WebKit 40–60 ms, both 15–30 ms locally);
-  // real CI thresholds come with the phase 7 benchmarks.
-  expect(Math.min(...opens)).toBeLessThan(process.env.GITHUB_ACTIONS ? 200 : 100)
+  // 15–30 ms locally and 23–78 ms on GitHub's runners (Chromium; WebKit 35–40 ms there): it was
+  // 110–130 ms on the runners before phase 7's fixes (DESIGN §22 items 65, 68).
+  expect(Math.min(...opens)).toBeLessThan(100)
 })
 
-test('a 5 MB PDF shows its first page fast', async ({ page }) => {
+test('a 5 MB PDF shows its first page fast', async ({ page, browserName }) => {
   test.setTimeout(120_000)
   const { execFileSync } = await import('node:child_process')
   const { mkdtempSync, readFileSync } = await import('node:fs')
@@ -125,7 +125,7 @@ test('a 5 MB PDF shows its first page fast', async ({ page }) => {
   await expect(page.getByTestId('sync-status')).toHaveText(/Synced/, { timeout: 60_000 })
   console.log(`5 MB PDF first page: ${samples.map((x) => x.toFixed(0)).join(', ')} ms`)
   // Playwright's Desktop Safari renders at DPR 2 (4x the pixels of Desktop Chrome). The first page
-  // paints at 1x, then sharp (DESIGN §22 item 78): 230–250 ms locally (was 600–850 ms; GitHub's
-  // runners took 1.2–1.4 s), within the SPEC's 300 ms. Headroom for the runners.
-  expect(Math.min(...samples)).toBeLessThan(1000)
+  // paints at 1x, then sharp (DESIGN §22 item 78): 230–250 ms locally (was 600–850 ms), within the
+  // SPEC's 300 ms. WebKit on GitHub's runners is ~5x slower: 1.2–1.4 s (was 1.9–4.5 s).
+  expect(Math.min(...samples)).toBeLessThan(process.env.GITHUB_ACTIONS && browserName === 'webkit' ? 2000 : 1000)
 })

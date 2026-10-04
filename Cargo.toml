@@ -26,6 +26,13 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# `cargo test --release` (simulation, benchmarks) builds with this one, which would inherit the
+# above: keep test builds quick and their backtraces symbolised.
+[profile.bench]
+lto = false
+codegen-units = 16
+strip = false
+
 [profile.test]
 opt-level = 1
 [profile.test.package."*"]

@@ -97,7 +97,11 @@ fn wait_for_x_display() {
         if !d.is_null() {
             unsafe { (xlib.XCloseDisplay)(d) };
             if t.elapsed().as_millis() > 0 {
+                // Refused at first: the previous instance's processes were still letting go of
+                // their X connections. CEF opens several more; give them a moment to finish (CI
+                // once saw the window creation fail right after the display answered).
                 eprintln!("jess: X display reachable after {:?}", t.elapsed());
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
             return;
         }

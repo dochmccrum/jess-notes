@@ -51,6 +51,10 @@ for v in small full; do
   JESS_DATA_DIR=$data PORT=$port JESS_GIT_ENABLED=false JESS_MIRROR_ENABLED=false "$jess" import "$src" >/dev/null
   if [ $v = small ]; then rec import_5k_notes_s "$(secs "$t" "$(now)")" s; else rec import_full_vault_s "$(secs "$t" "$(now)")" s; fi
 done
+# Thumbnails and PDF text, as a server would have them (it derives in the background otherwise).
+t=$(now)
+JESS_DATA_DIR=$out/data-full PORT=$port "$jess" derive-all >/dev/null
+rec derive_all_s "$(secs "$t" "$(now)")" s
 
 # Bundle sizes.
 (cd ui && node scripts/check-budgets.mjs >/dev/null) || true
