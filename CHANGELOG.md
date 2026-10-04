@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1 — 2026-10-04
+
+- **Linux AppImage:** it closed at once on distributions newer than the build machine (e.g.
+  Fedora 44), because it bundled an older NSS than the system's crypto module needs. It now uses
+  the system's NSS, like the `.deb`, and no longer carries WebKitGTK, which it never used. It's
+  50 MB smaller, and CI runs it on Fedora as well as Ubuntu.
+- **Settings → Password:** shows *Changing…* while it works (it takes a moment).
+
 ## 1.0.0 — 2026-10-04
 
 The first public release.

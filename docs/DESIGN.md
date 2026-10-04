@@ -1375,6 +1375,13 @@ each tightens a rule the simulation showed was underspecified.
       `JESS_ADMIN_PASSWORD`.
     - The web worker reports `ui/package.json`'s version, the native side the crate's: one
       version, 1.0.0, in `Cargo.toml` and `ui/package.json`.
+87. **The AppImage uses the system's NSS** (`apps/tauri/cef/fix-appimage.sh`, run after `tauri build`).
+    linuxdeploy bundled NSS and NSPR from the build machine (Ubuntu 24.04). NSS loads its crypto
+    module, `libsoftokn3.so`, from the system anyway, and Fedora 44's needs a newer `libnssutil3`.
+    So CEF aborted at start (`NSSUTIL_3.108 not found`): the 1.0.0 AppImage closed at once
+    there. The script repacks it without NSS/NSPR (every desktop has them; the `.deb` depends on
+    them) and without WebKitGTK and JavaScriptCore, which the CEF app never loads (228 → 178 MB).
+    CI now also runs the Ubuntu-built AppImage on Fedora, under Xvfb.
 
 ---
 

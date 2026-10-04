@@ -3,7 +3,7 @@ resolver = "2"
 members = ["core", "core/wasm", "server", "apps/native", "apps/tauri/src-tauri", "tools/vaultgen"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "MIT"
 rust-version = "1.85"

@@ -187,6 +187,7 @@ jobs:
           apps/tauri/cef/stage.sh target/release
           cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage
           for d in ../../target/release/bundle/deb/*.deb; do cef/fix-deb.sh "$d"; done
+          for a in ../../target/release/bundle/appimage/*.AppImage; do cef/fix-appimage.sh "$a"; done
       # The installed package: its layout, dependencies and AppArmor profile (Ubuntu 24.04
       # restricts the user namespaces Chromium's sandbox needs) on a stock system.
       - name: Install the .deb
@@ -197,6 +198,14 @@ jobs:
       # the runners, so it extracts itself instead of mounting.
       - name: Smoke test of the AppImage
         run: APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a -s "-screen 0 1280x900x24" node apps/tauri/e2e/smoke.mjs target/release/bundle/appimage/*.AppImage target/debug/jess
+      # An AppImage is for other distributions: run this Ubuntu-built one on Fedora too. A bundled
+      # NSS older than Fedora's once made it close at start (DESIGN §22 item 87).
+      - name: Smoke test of the AppImage on Fedora
+        run: |
+          docker run --rm --ipc=host --shm-size=1g -v "$PWD":"$PWD" -w "$PWD" -e APPIMAGE_EXTRACT_AND_RUN=1 -e JESS_NO_SANDBOX=1 fedora:44 sh -c '
+            dnf install -y -q xorg-x11-server-Xvfb xorg-x11-xauth which nodejs gtk3 nss alsa-lib libXcomposite libXdamage libXrandr \
+              mesa-libgbm libxkbcommon-x11 cups-libs at-spi2-atk libdrm procps-ng > /dev/null &&
+            xvfb-run -a -s "-screen 0 1280x900x24" node apps/tauri/e2e/smoke.mjs target/release/bundle/appimage/*.AppImage target/debug/jess'
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

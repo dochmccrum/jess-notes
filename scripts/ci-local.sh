@@ -90,6 +90,7 @@ job_linux_app() {
     apps/tauri/cef/stage.sh target/release &&
     (cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage) &&
     for d in target/release/bundle/deb/*.deb; do apps/tauri/cef/fix-deb.sh "$d" || return 1; done || return 1
+  for a in target/release/bundle/appimage/*.AppImage; do apps/tauri/cef/fix-appimage.sh "$a" || return 1; done
   local x
   x=$(mktemp -d)
   (cd "$x" && ar x "$root"/target/release/bundle/deb/*.deb && tar xzf data.tar.gz) &&

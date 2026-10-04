@@ -117,6 +117,7 @@ jobs:
           apps/tauri/cef/stage.sh target/release
           cd apps/tauri && ../../ui/node_modules/.bin/tauri build --bundles deb,appimage
           for d in ../../target/release/bundle/deb/*.deb; do cef/fix-deb.sh "$d"; done
+          for a in ../../target/release/bundle/appimage/*.AppImage; do cef/fix-appimage.sh "$a"; done
       - name: File names without spaces
         run: |
           mkdir -p out
