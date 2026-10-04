@@ -74,23 +74,44 @@ self.addEventListener('fetch', (e) => {
 // otherwise the server with the device token (read from IndexedDB; never in a URL). Derived
 // variants (display/thumb/pdf-thumb) are small and kept in Cache Storage.
 
-const DB_NAME = 'jess'
 const CHUNK = 4 << 20
 const DERIVED_CACHE = 'jess-derived-v1'
 let tokenCache: string | null = null
 
-// Must create the same stores as src/worker/idb.ts: whichever opens the database first
-// creates it.
+const DB_NAME = 'jess'
+let dbP: Promise<IDBDatabase> | null = null
+
+// One shared connection. The sync worker owns the schema (src/worker/idb.ts): this opens whatever
+// version exists, so it never fails or blocks when the app upgrades it, and it closes when the
+// database is upgraded or deleted (the next request reopens it). If the service worker gets there
+// first, it creates version 1 with the stores it reads; the worker's upgrade adds the rest.
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB_NAME, 1)
+  if (dbP) return dbP
+  const p = new Promise<IDBDatabase>((resolve, reject) => {
+    const r = indexedDB.open(DB_NAME)
     r.onupgradeneeded = () => {
       const db = r.result
       for (const s of ['kv', 'blobchunks', 'meta']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s)
     }
-    r.onsuccess = () => resolve(r.result)
-    r.onerror = () => reject(r.error)
+    r.onsuccess = () => {
+      const db = r.result
+      const forget = () => {
+        if (dbP === p) dbP = null
+      }
+      db.onversionchange = () => {
+        forget()
+        db.close()
+      }
+      db.onclose = forget
+      resolve(db)
+    }
+    r.onerror = () => {
+      if (dbP === p) dbP = null
+      reject(r.error)
+    }
   })
+  dbP = p
+  return p
 }
 
 function idbGet<T>(db: IDBDatabase, store: string, key: string): Promise<T | undefined> {

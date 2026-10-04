@@ -293,7 +293,7 @@ The compactor merges, per doc, every `doc_updates` row with `seq ≤ X` into **o
 
 | event | guarantee |
 |---|---|
-| keystroke | persisted locally within about 30 ms (a crash before that can lose ≤30 ms of typing; every persisted keystroke is safe) |
+| keystroke | web: journalled in IndexedDB as it arrives, then coalesced for 30 ms (§22 item 61); native: persisted within about 30 ms (a crash before that can lose ≤30 ms of typing). Every persisted keystroke is safe |
 | ack | server has committed with `synchronous=FULL` |
 | local blob | never evicted or deleted until the server reports `present` for that hash |
 | server crash mid-batch | the transaction rolls back; the client resends; dedupe by op id |
@@ -1166,6 +1166,30 @@ each tightens a rule the simulation showed was underspecified.
     but left its element in place and never cleared the embed's handle, so it couldn't go live
     again when scrolled back to. Eviction now puts the thumbnail back and lets the embed go live
     again next time it comes into view.
+61. **A web update journal closes the 30 ms window.** The sync worker still coalesces editor
+    updates for 30 ms before `core.localDocUpdate`, but each update is first appended to an
+    IndexedDB `journal` store (schema version 2, auto-increment keys, so oldest first). The entries
+    are deleted once the coalesced update is committed. At init, after the core has loaded,
+    leftover entries are merged per doc (`Y.mergeUpdates`) and committed like a local edit. That's
+    safe because applying a Yjs update twice is a no-op. A page killed mid-window now loses only
+    an update whose journal `add` hadn't committed (one small IndexedDB transaction, not 30 ms of
+    typing). The e2e test stops the worker's coalescing timer and then closes the worker, and it
+    fails without the replay. The native backend keeps its 30 ms window: its process doesn't die
+    with a browser tab.
+62. **One IndexedDB connection per context, closed on `versionchange`.** Every `openDb()` call
+    opened a new connection and none was ever closed. The service worker opened one for every
+    `/_blob/` request: 50 open connections after a 50-image paste, which is the likely cause of
+    the service-worker crashes seen in Playwright's Docker image. Open connections also block a
+    schema upgrade (item 61's version 2) and "erase this device". Now each context (page, sync
+    worker, service worker) memoises one connection, closes it on `versionchange` and reopens it on
+    the next call. The service worker opens whatever version exists (no version argument), so it
+    never fails with `VersionError` or blocks the worker's upgrade; the sync worker owns the
+    schema. A page or service worker from before this change has no `versionchange` handler: its
+    connections hold up the upgrade until it is replaced (`skipWaiting`) or reloaded, which
+    happens once. The 50-image e2e test builds the files in one evaluate and pastes them in a
+    second, synchronous one. An awaited evaluate that spans the paste's work sometimes failed with
+    "Execution context was destroyed", although the page carried on and CDP reported no context
+    change.
 
 ---
 

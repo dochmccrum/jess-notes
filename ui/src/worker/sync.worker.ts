@@ -4,7 +4,7 @@
 /// <reference lib="webworker" />
 import init, { Core, extract, Sha256, blobInfo as wasmBlobInfo } from '../wasm/core.js'
 import * as Y from 'yjs'
-import { openDb, loadAll, commit, scanPrefix, metaGet, putChunk, getChunk, deleteChunks, type Write } from './idb'
+import { openDb, loadAll, commit, scanPrefix, metaGet, putChunk, getChunk, deleteChunks, journalAppend, journalAll, journalDelete, type JournalEntry, type Write } from './idb'
 import { reconnectDelay } from './backoff'
 import type { Req, WorkerEvent, InitResult } from './protocol'
 import type { EntryMeta, Extracted, SyncStatus } from '../lib/types'
@@ -32,7 +32,9 @@ let unsaved = 0
 /** Doc updates received from the UI, ever (reported in the status). */
 let received = 0
 const openDocs = new Map<string, number>()
-const coalesce = new Map<string, { ups: Uint8Array[]; timer: ReturnType<typeof setTimeout> }>()
+// Each update is journalled (`keys`) as it arrives, then committed coalesced: a crash in between
+// loses nothing, the journal is replayed at start-up (DESIGN §22 item 61).
+const coalesce = new Map<string, { ups: Uint8Array[]; keys: Promise<number>[]; timer: ReturnType<typeof setTimeout> }>()
 let index: SearchIndex | null = null
 let indexing: Promise<void> | null = null
 const dirtyDocs = new Set<string>()
@@ -422,19 +424,26 @@ function flushDoc(id: string) {
   coalesce.delete(id)
   const merged = c.ups.length === 1 ? c.ups[0] : Y.mergeUpdates(c.ups)
   const n = c.ups.length
-  void run(() => core.localDocUpdate(id, 'body', merged, Date.now()) as Output).finally(() => {
+  const committed = run(() => core.localDocUpdate(id, 'body', merged, Date.now()) as Output)
+  void committed.finally(() => {
     unsaved -= n
     postStatus()
   })
+  // The journal entries go once the commit is durable (a failed commit keeps them for replay).
+  void committed.then(async () => journalDelete(db, await Promise.all(c.keys))).catch((e) => console.error('jess worker: journal', e))
   markDirty(id)
 }
 
 function docUpdate(id: string, update: Uint8Array) {
   received++
   if (unsaved++ === 0) postStatus()
+  const key = journalAppend(db, id, update)
+  key.catch((e) => console.error('jess worker: journal', e))
   const c = coalesce.get(id)
-  if (c) c.ups.push(update)
-  else coalesce.set(id, { ups: [update], timer: setTimeout(() => flushDoc(id), 30) })
+  if (c) {
+    c.ups.push(update)
+    c.keys.push(key)
+  } else coalesce.set(id, { ups: [update], keys: [key], timer: setTimeout(() => flushDoc(id), 30) })
 }
 
 // ---------------------------------------------------------------- index
@@ -880,6 +889,22 @@ async function readSize(hash: string): Promise<number | null> {
   return size
 }
 
+/** Commits editor updates a previous session journalled but didn't get to commit (a crash or a
+ *  kill inside the coalescing window). Yjs updates are idempotent: one that did get committed
+ *  before the crash is harmless to apply again. */
+async function replayJournal() {
+  const pending = await journalAll(db)
+  if (!pending.length) return
+  const byDoc = new Map<string, JournalEntry[]>()
+  for (const e of pending) byDoc.set(e.id, [...(byDoc.get(e.id) ?? []), e])
+  for (const [id, es] of byDoc) {
+    const merged = es.length === 1 ? es[0].update : Y.mergeUpdates(es.map((e) => e.update))
+    await run(() => core.localDocUpdate(id, 'body', merged, Date.now()) as Output)
+    await journalDelete(db, es.map((e) => e.key))
+    markDirty(id)
+  }
+}
+
 // ---------------------------------------------------------------- RPC
 
 const methods: Record<string, (...a: never[]) => unknown> = {
@@ -891,6 +916,7 @@ const methods: Record<string, (...a: never[]) => unknown> = {
     const [keys, vals] = await loadAll(db)
     core = new Core(keys, vals, replicaHint ?? randomHex(7), CHUNK)
     await commit(db, core.take_init_writes() as Write[])
+    await replayJournal()
     connect()
     setTimeout(() => void ensureIndex(), 1500)
     const r: InitResult = { entries: JSON.parse(core.viewJson()), status: status(), replica: core.replica, vaultId: core.vaultId ?? null }

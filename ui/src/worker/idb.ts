@@ -1,22 +1,53 @@
 // IndexedDB persistence for the sync worker. `kv` holds the core's key-value store (binary keys,
 // compared bytewise); `blobchunks` holds local blob bytes in 4 MiB records; `meta` holds device
-// settings, the token and the cold-start boot record (read by the main thread directly).
+// settings, the token and the cold-start boot record (read by the main thread directly);
+// `journal` holds editor updates from the moment the worker receives them until their coalesced
+// commit lands (DESIGN §22 item 61).
 
 export const DB_NAME = 'jess'
-const VERSION = 1
+const VERSION = 2
 
+const open = new Map<string, Promise<IDBDatabase>>()
+
+/** One connection per database and realm (page, worker, service worker), shared by every caller.
+ *  It closes itself when another context upgrades or deletes the database, so a newer version of
+ *  the app (or "erase this device") is never blocked by an open connection; the next call reopens. */
 export function openDb(name = DB_NAME): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  let p = open.get(name)
+  if (p) return p
+  p = new Promise<IDBDatabase>((resolve, reject) => {
     const r = indexedDB.open(name, VERSION)
     r.onupgradeneeded = () => {
       const db = r.result
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv')
       if (!db.objectStoreNames.contains('blobchunks')) db.createObjectStore('blobchunks')
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta')
+      if (!db.objectStoreNames.contains('journal')) db.createObjectStore('journal', { autoIncrement: true })
     }
-    r.onsuccess = () => resolve(r.result)
-    r.onerror = () => reject(r.error)
+    r.onsuccess = () => {
+      const db = r.result
+      const forget = () => {
+        if (open.get(name) === p) open.delete(name)
+      }
+      db.onversionchange = () => {
+        forget()
+        db.close()
+      }
+      db.onclose = forget
+      const close = db.close.bind(db)
+      db.close = () => {
+        forget()
+        close()
+      }
+      resolve(db)
+    }
+    r.onerror = () => {
+      if (open.get(name) === p) open.delete(name)
+      reject(r.error)
+    }
   })
+  open.set(name, p)
+  return p
 }
 
 export const toKey = (u: Uint8Array): ArrayBuffer => u.slice().buffer as ArrayBuffer
@@ -119,3 +150,36 @@ export async function deleteChunks(db: IDBDatabase, hash: string): Promise<void>
   tx.objectStore('blobchunks').delete(IDBKeyRange.bound(`${hash}:`, `${hash}:~`))
   await done(tx)
 }
+
+// ---------------------------------------------------------------- journal
+
+export interface JournalEntry {
+  key: number
+  id: string
+  update: Uint8Array
+}
+
+/** Appends an editor update; resolves with its key once it's durable. */
+export async function journalAppend(db: IDBDatabase, id: string, update: Uint8Array): Promise<number> {
+  const tx = db.transaction('journal', 'readwrite')
+  const key = await req(tx.objectStore('journal').add({ id, update }))
+  await done(tx)
+  return key as number
+}
+
+export async function journalDelete(db: IDBDatabase, keys: number[]): Promise<void> {
+  if (!keys.length) return
+  const tx = db.transaction('journal', 'readwrite')
+  const st = tx.objectStore('journal')
+  for (const k of keys) st.delete(k)
+  await done(tx)
+}
+
+/** Every journalled update, oldest first. */
+export async function journalAll(db: IDBDatabase): Promise<JournalEntry[]> {
+  const tx = db.transaction('journal', 'readonly')
+  const st = tx.objectStore('journal')
+  const [keys, vals] = await Promise.all([req(st.getAllKeys()), req(st.getAll())])
+  return keys.map((k, i) => ({ key: k as number, id: (vals[i] as { id: string }).id, update: new Uint8Array((vals[i] as { update: Uint8Array }).update) }))
+}
+

@@ -11,6 +11,30 @@ test('create a note, type, reload: text persists and syncs', async ({ page }) =>
   await expect(page.locator('.cm-content')).toContainText('Hello from e2e')
 })
 
+test('keystrokes survive the worker dying inside the coalescing window', async ({ page }) => {
+  await login(page)
+  const name = `Crash ${Date.now()}`
+  await newNote(page, name)
+  await page.keyboard.type('Before the crash.')
+  await expect(page.getByTestId('sync-status')).toHaveText(/Synced/, { timeout: 5000 })
+  // The sync worker then dies inside the 30 ms window in which it coalesces updates before
+  // committing them. Deterministically: its coalescing timers never fire (as if it died first),
+  // then `close()` ends it like a crash. The journal must have the updates (DESIGN §22 item 61).
+  const worker = page.workers().find((w) => /sync\.worker/.test(w.url()))!
+  await worker.evaluate(() => {
+    const g = self as unknown as { setTimeout: (f: () => void, ms?: number) => number }
+    const orig = g.setTimeout.bind(self)
+    g.setTimeout = (f, ms) => (ms === 30 ? 0 : orig(f, ms))
+  })
+  await page.keyboard.type(' Typed just before.')
+  await page.waitForTimeout(300)
+  await worker.evaluate(() => (self as unknown as { close(): void }).close())
+  await page.reload()
+  await page.getByTestId('tree').getByText(name, { exact: true }).click()
+  await expect(page.locator('.cm-content')).toContainText('Before the crash. Typed just before.', { timeout: 10_000 })
+  await expect(page.getByTestId('sync-status')).toHaveText(/Synced/, { timeout: 10_000 })
+})
+
 test('edits reach a second device quickly', async ({ browser }) => {
   const a = await (await browser.newContext()).newPage()
   const b = await (await browser.newContext()).newPage()

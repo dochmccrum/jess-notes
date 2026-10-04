@@ -44,8 +44,10 @@ test('a note with 50 images opens fast, without layout shift', async ({ page }) 
   await login(page)
   const note = `Gallery ${Date.now()}`
   await newNote(page, note)
-  // 50 distinct PNGs pasted at once.
-  await page.locator('.cm-content').evaluate(async (el) => {
+  // 50 distinct PNGs pasted at once. The paste is dispatched by a second, synchronous evaluate:
+  // an awaited evaluate that spans the paste's work sometimes fails with "Execution context was
+  // destroyed" in Playwright although the page carries on (no navigation, no context events).
+  await page.evaluate(async () => {
     const dt = new DataTransfer()
     const keep: HTMLCanvasElement[] = [] // a canvas collected mid-toBlob takes the awaited promise with it
     for (let i = 0; i < 50; i++) {
@@ -60,7 +62,11 @@ test('a note with 50 images opens fast, without layout shift', async ({ page }) 
       dt.items.add(new File([b], `img${i}.png`, { type: 'image/png' }))
     }
     keep.length = 0
-    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+    ;(window as unknown as { __paste: DataTransfer }).__paste = dt
+  })
+  await page.evaluate(() => {
+    const dt = (window as unknown as { __paste: DataTransfer }).__paste
+    document.querySelector('.cm-content')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
   })
   // All imported (the editor only renders what's visible: CodeMirror virtualises).
   await expect.poll(() => page.evaluate(() => document.querySelectorAll('.cm-content .jess-img img').length), { timeout: 60_000 }).toBeGreaterThan(3)
