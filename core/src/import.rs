@@ -776,8 +776,20 @@ pub trait ImportSink {
     fn meta(&mut self, ops: Vec<MetaOp>) -> io::Result<()>;
     /// Creates a note's text doc (a single insert) or, when `existing`, applies a minimal diff.
     fn doc(&mut self, entry: Id, text: &str, existing: bool) -> io::Result<()>;
-    /// Streams a file into local blob storage, returning its hash and facts.
+    /// Streams a file into local blob storage, returning its hash and facts. A sink may defer
+    /// making it durable and recording it until the next `meta`, `docs` or `flush` call.
     fn blob(&mut self, name: &str, r: &mut dyn Read, size: u64) -> io::Result<(Hash, BlobInfo)>;
+    /// A batch's note texts (one transaction where the sink can).
+    fn docs(&mut self, docs: Vec<(Id, String, bool)>) -> io::Result<()> {
+        for (id, t, existing) in docs {
+            self.doc(id, &t, existing)?;
+        }
+        Ok(())
+    }
+    /// Called once at the end: commits anything deferred.
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn keep_both_name(name: &str) -> String {
@@ -963,12 +975,13 @@ pub fn execute(
         if !ops.is_empty() {
             sink.meta(ops)?;
         }
-        for (id, t, ex) in docs {
-            sink.doc(id, &t, ex)?;
+        if !docs.is_empty() {
+            sink.docs(docs)?;
         }
         done += batch.len();
         progress(done, total);
     }
+    sink.flush()?;
     Ok(report)
 }
 

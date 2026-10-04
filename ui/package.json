@@ -6,8 +6,8 @@
   "packageManager": "pnpm@12.8.1",
   "scripts": {
     "wasm": "node scripts/build-wasm.mjs",
-    "dev": "vite",
-    "build": "vite build && node scripts/sw-manifest.mjs && node scripts/check-budgets.mjs",
+    "dev": "node scripts/patch-pdfjs.mjs && vite",
+    "build": "node scripts/patch-pdfjs.mjs && vite build && node scripts/sw-manifest.mjs && node scripts/check-budgets.mjs",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "e2e": "playwright test"

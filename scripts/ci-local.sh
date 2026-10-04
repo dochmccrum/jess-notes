@@ -3,7 +3,7 @@
 # GitHub's runners. One log per job in target/ci-local/, and a pass/fail summary at the end.
 #
 #   scripts/ci-local.sh                 # every job
-#   scripts/ci-local.sh rust web        # just these (rust simulation yjs-compat web linux-app android-app docker)
+#   scripts/ci-local.sh rust web        # just these (rust simulation yjs-compat web bench linux-app android-app docker)
 #
 # Differences from GitHub CI (see AGENTS.md for the toolchain):
 #   - WebKit e2e runs in Playwright's Ubuntu image (its WebKit doesn't run on Fedora), with a
@@ -129,11 +129,15 @@ job_android_app() {
   return $rc
 }
 
+job_bench() {
+  (cd ui && pnpm install --frozen-lockfile && pnpm wasm && pnpm build) && scripts/bench.sh
+}
+
 job_docker() {
   docker build -q -t jess-ci-local .
 }
 
-all=(rust simulation yjs-compat web linux-app android-app docker)
+all=(rust simulation yjs-compat web bench linux-app android-app docker)
 jobs=("$@")
 [ ${#jobs[@]} -eq 0 ] && jobs=("${all[@]}")
 fetch_pdfium

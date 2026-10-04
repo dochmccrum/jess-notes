@@ -49,7 +49,8 @@ async fn sync_loop(n: Native) {
         } else {
             let conn = tokio::time::timeout(
                 Duration::from_secs(10),
-                tokio_tungstenite::connect_async(ws_url(&server)),
+                // Nagle off: small sync frames go out at once (ureq sets it for HTTP).
+                tokio_tungstenite::connect_async_with_config(ws_url(&server), None, true),
             )
             .await;
             match conn {

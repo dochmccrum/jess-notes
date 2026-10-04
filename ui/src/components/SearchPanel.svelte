@@ -13,26 +13,37 @@
     input?.focus()
   })
 
+  // One query in flight, latest wins: the first keystroke is answered at once (no debounce, DESIGN
+  // §18: query → results <30 ms), and fast typing doesn't queue a query per key in the worker.
+  let inFlight = false
+  let next: string | null = null
+  async function run(query: string) {
+    inFlight = true
+    try {
+      const r = await app.backend.search(query)
+      if (next === null && q.trim() === query) {
+        hits = r.filter((h) => app.entries.get(h.id) && !app.entries.get(h.id)!.trashed)
+        busy = false
+      }
+    } finally {
+      inFlight = false
+      const n = next
+      next = null
+      if (n !== null && n === q.trim() && n) void run(n)
+    }
+  }
+
   $effect(() => {
     void app.indexVersion // re-run when edits have been indexed
     const query = q.trim()
     if (!query) {
       hits = []
+      next = null
       return
     }
     busy = untrack(() => !hits.length)
-    let live = true
-    const t = setTimeout(async () => {
-      const r = await app.backend.search(query)
-      if (live) {
-        hits = r.filter((h) => app.entries.get(h.id) && !app.entries.get(h.id)!.trashed)
-        busy = false
-      }
-    }, 80)
-    return () => {
-      live = false
-      clearTimeout(t)
-    }
+    if (inFlight) next = query
+    else void run(query)
   })
 
   function parts(s: string) {

@@ -69,6 +69,7 @@ pub fn build(cfg: &Config) -> Result<Shared, String> {
         started: now_ms(),
         status: Mutex::new(Default::default()),
         mirror: Default::default(),
+        readers: Mutex::new(Vec::new()),
     });
     Ok(app)
 }
@@ -88,6 +89,12 @@ pub async fn run(
     }
     crate::start_mirror(app.clone());
     let router = http::router(app.clone());
+    // No Nagle: a response written in more than one segment (headers, then body) otherwise waits
+    // for the client's delayed ACK, 40 ms on Linux, on every request and WebSocket message.
+    use axum::serve::ListenerExt;
+    let listener = listener.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    });
     axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),

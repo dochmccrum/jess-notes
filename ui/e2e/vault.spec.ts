@@ -29,6 +29,33 @@ test('rename rewrites links on every device', async ({ browser }) => {
   await expect(treeItem(b, `${t} renamed`)).toBeVisible()
 })
 
+test('a longer offline spell: back online, it reconnects at once (no long-poll fallback)', async ({ browser, browserName }) => {
+  test.skip(browserName === 'webkit', "WebKit's offline emulation doesn't cover worker WebSockets")
+  const ctxA = await browser.newContext()
+  const a = await ctxA.newPage()
+  const b = await (await browser.newContext()).newPage()
+  await login(a)
+  await login(b)
+  const n = `Away ${Date.now()}`
+  await newNote(b, n)
+  await b.keyboard.type('before.')
+  await expect(b.getByTestId('sync-status')).toHaveText(/Synced/)
+  await ctxA.setOffline(true)
+  await a.evaluate(() => window.dispatchEvent(new Event('offline')))
+  await expect(a.getByTestId('sync-status')).toHaveText(/Offline/, { timeout: 15_000 })
+  // Long enough for several failed WebSocket attempts, which used to switch A to long-polling for
+  // good, and to put its retries into a multi-second backoff.
+  await a.waitForTimeout(8000)
+  await b.keyboard.type(' While A was away.')
+  await expect(b.getByTestId('sync-status')).toHaveText(/Synced/)
+  await ctxA.setOffline(false)
+  const t0 = Date.now()
+  await a.evaluate(() => window.dispatchEvent(new Event('online')))
+  await treeItem(a, n).click()
+  await expect(a.locator('.cm-content')).toContainText('While A was away.', { timeout: 5000 })
+  console.log(`back online → caught up ≈ ${Date.now() - t0} ms`)
+})
+
 test('offline edits sync after reconnect', async ({ browser, browserName }) => {
   // Playwright's WebKit offline emulation doesn't stop the sync worker's WebSocket: it reconnects
   // at once, so "offline" edits would sync live and the Offline status only flashes.

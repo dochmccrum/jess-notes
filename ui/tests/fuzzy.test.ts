@@ -16,6 +16,12 @@ describe('fuzzy', () => {
     const h2 = search([cand('a', 'xproject.md'), cand('b', 'project.md')], 'proj')
     expect(h2[0].id).toBe('b')
   })
+  it('ranks the note named by the query first, then names over paths', () => {
+    const c = [cand('scattered', 'projects/others 1/matrix 2/name hand soon 3576.md'), cand('exact', 'bench/maths.md'), cand('longer', 'maths homework.md'), cand('in-path', 'maths/zz.md')]
+    expect(search(c, 'maths').map((h) => h.id)).toEqual(['exact', 'longer', 'in-path', 'scattered'])
+    // A consecutive run at a word start beats the same letters spread over word starts.
+    expect(score('maths', 'a/maths x.md')).toBeGreaterThan(score('maths', 'a/matrix h s.md'))
+  })
   it('is case- and NFC-insensitive', () => {
     const decomposed = 'Café.md'.normalize('NFD')
     const hits = search([cand('1', decomposed.normalize('NFC'))], 'CAFÉ')

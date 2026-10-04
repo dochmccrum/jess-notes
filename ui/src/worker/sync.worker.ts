@@ -4,7 +4,7 @@
 /// <reference lib="webworker" />
 import init, { Core, extract, Sha256, blobInfo as wasmBlobInfo } from '../wasm/core.js'
 import * as Y from 'yjs'
-import { openDb, loadAll, commit, scanPrefix, metaGet, putChunk, getChunk, deleteChunks, journalAppend, journalAll, journalDelete, type JournalEntry, type Write } from './idb'
+import { openDb, loadAll, commit, scanPrefix, metaGet, putChunk, putChunks, getChunk, deleteChunks, journalAppend, journalAll, journalDelete, type JournalEntry, type Write } from './idb'
 import { reconnectDelay } from './backoff'
 import type { Req, WorkerEvent, InitResult } from './protocol'
 import type { EntryMeta, Extracted, SyncStatus } from '../lib/types'
@@ -61,6 +61,9 @@ function run<T extends Output | void>(f: () => T): Promise<void> {
 }
 
 async function apply(o: Output) {
+  // Text from other devices goes to open editors before the local commit (an fsync): the server
+  // already has it, and if this device dies first, its cursor hasn't moved, so it is pulled again.
+  for (const e of o.events) if (e.t === 'doc' && e.slot === 'body' && openDocs.has(e.entry)) post({ ev: 'doc', id: e.entry, update: e.update })
   await commit(db, o.writes as Write[])
   const pendingHttp: Uint8Array[] = []
   for (const frame of o.send) {
@@ -76,10 +79,7 @@ async function apply(o: Output) {
         entryIds = entryIds.concat(e.ids)
         break
       case 'doc':
-        if (e.slot === 'body') {
-          if (openDocs.has(e.entry)) post({ ev: 'doc', id: e.entry, update: e.update })
-          markDirty(e.entry)
-        }
+        if (e.slot === 'body') markDirty(e.entry)
         break
       case 'rejected':
         post({ ev: 'rejected', opId: e.opId, reason: e.reason })
@@ -158,12 +158,32 @@ function connect() {
   sock.onclose = () => {
     if (ws !== sock) return
     ws = null
-    if (!opened && ++wsFailures >= 3) {
-      httpMode = true // proxies that break WebSocket upgrades (DESIGN §5.3)
-    }
     void run(() => core.disconnected() as Output)
-    scheduleReconnect()
+    if (opened) return scheduleReconnect()
+    // A socket that never opened counts towards the HTTP fallback (proxies that break WebSocket
+    // upgrades, DESIGN §5.3) only if the server answers over HTTP: offline, every attempt fails,
+    // and that used to switch the device to long-polling for good.
+    void fetch(api('/healthz'), { method: 'HEAD', cache: 'no-store' }).then(
+      (r) => {
+        if (r.ok && ++wsFailures >= 3) httpMode = true
+      },
+      () => {},
+    ).finally(scheduleReconnect)
   }
+}
+
+/** The long-poll loop's backoff sleep; `probe` (the OS says we're back online) cuts it short. */
+let wakeHttp: (() => void) | null = null
+function httpSleep(ms: number) {
+  return new Promise<void>((r) => {
+    const t = setTimeout(done, ms)
+    function done() {
+      clearTimeout(t)
+      wakeHttp = null
+      r()
+    }
+    wakeHttp = done
+  })
 }
 
 function scheduleReconnect() {
@@ -192,12 +212,12 @@ async function httpLoop() {
         resp = await fetch(new URL('/api/sync', base || self.location.origin), { method: 'POST', body: body as BodyInit, headers: { 'content-type': 'application/cbor' } })
       } catch {
         httpOutbox.unshift(...frames)
-        await new Promise((r) => setTimeout(r, reconnectDelay(attempt++, foreground)))
+        await httpSleep(reconnectDelay(attempt++, foreground))
         continue
       }
       if (!resp.ok) {
         httpOutbox.unshift(...frames)
-        await new Promise((r) => setTimeout(r, reconnectDelay(attempt++, foreground)))
+        await httpSleep(reconnectDelay(attempt++, foreground))
         continue
       }
       attempt = 0
@@ -234,6 +254,12 @@ function probe() {
     const ping = core.probe(Date.now())
     ws.send(ping)
     setTimeout(() => void run(() => core.tick(Date.now() + 3000) as Output), 2100)
+  } else if (httpRunning) {
+    // Long-polling: try WebSocket again now (the network changed) and end any backoff sleep.
+    attempt = 0
+    httpMode = false
+    wsFailures = 0
+    wakeHttp?.()
   } else {
     // A socket stuck connecting (e.g. opened while the network was down) is replaced now.
     dropSocket()
@@ -335,13 +361,8 @@ async function blobTask(t: { t: string; hash: string; size?: number; uploadId?: 
         const end = t.offset! + t.len! - 1
         const r = await fetch(api(`/api/blobs/${t.hash}`), { headers: authHeaders({ range: `bytes=${t.offset}-${end}` }) })
         if (!r.ok) return { t: 'range', hash: t.hash, index: t.index, ok: false }
-        try {
-          await putChunk(db, t.hash, t.index!, new Uint8Array(await r.arrayBuffer()))
-        } catch (e) {
-          if (isQuota(e)) void onQuota()
-          throw e
-        }
-        return { t: 'range', hash: t.hash, index: t.index, ok: true }
+        // Stored by pumpBlobs, the whole round in one transaction.
+        return { t: 'range', hash: t.hash, index: t.index, ok: true, bytes: new Uint8Array(await r.arrayBuffer()) }
       }
       case 'presence': {
         const r = await fetch(api('/api/blobs/presence'), { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ hashes: t.hashes }) })
@@ -363,7 +384,16 @@ async function pumpBlobs() {
     const tasks = JSON.parse(core.blobTasks()) as Parameters<typeof blobTask>[0][]
     if (pres) tasks.push(JSON.parse(pres))
     if (!tasks.length) return
-    const results = await Promise.all(tasks.map(blobTask))
+    const results = (await Promise.all(tasks.map(blobTask))) as { t: string; bytes?: Uint8Array; hash?: string; index?: number }[]
+    const got = results.filter((r) => r.bytes)
+    try {
+      await putChunks(db, got.map((r) => ({ hash: r.hash!, index: r.index!, bytes: r.bytes! })))
+    } catch (e) {
+      if (isQuota(e)) void onQuota()
+      for (const r of got) r.t = 'failed'
+      results.forEach((r, i) => r.t === 'failed' && Object.assign(r, { task: tasks[i] }))
+    }
+    for (const r of got) delete r.bytes
     let failed = 0
     await run(() => {
       const writes: [Uint8Array, Uint8Array | null][] = []
@@ -471,6 +501,7 @@ async function ensureIndex(): Promise<SearchIndex> {
       }
       await reindexDirty()
       post({ ev: 'indexed' })
+      post({ ev: 'indexReady' })
       schedulePdfIndex(0)
     })()
   }
@@ -562,8 +593,13 @@ async function indexPdfs() {
           continue
         }
         if (!r.ok) throw new Error(String(r.status))
-        const v = (await r.json()) as { pages: string[] }
-        index.upsertPdf(e.id, e.name, e.blob!, v.pages ?? [])
+        const pages = ((await r.json()) as { pages?: string[] }).pages ?? []
+        // 50 pages a transaction, yielding in between: a 500-page PDF in one go kept the worker
+        // (opening notes, sync) waiting for most of a second.
+        for (let from = 0; from === 0 || from < pages.length; from += 50) {
+          index.upsertPdf(e.id, e.name, e.blob!, pages, from, Math.min(from + 50, pages.length))
+          await new Promise((res) => setTimeout(res, 0))
+        }
       } catch {
         retry = true // offline or server trouble
       }
@@ -579,15 +615,24 @@ async function reindexDirty() {
   const ids = [...dirtyDocs]
   dirtyDocs.clear()
   if (!ids.length) return
-  for (const id of ids) {
-    const e = (JSON.parse(core.entriesJson([id])) as EntryMeta[])[0]
-    if (!e || 'deleted' in e || e.purged || e.kind !== 'markdown' || e.blob) {
-      index.remove(id)
-      continue
+  // In slices of up to 50 notes or ~20 ms of preparation, one index transaction each, yielding
+  // between slices: during a big catch-up (a new device: 10k notes, ~40 s) an incoming edit waits
+  // for at most one slice, not for the index.
+  for (let i = 0; i < ids.length; ) {
+    const t0 = performance.now()
+    const batch: Parameters<SearchIndex['upsertMany']>[0] = []
+    for (; i < ids.length && batch.length < 50 && performance.now() - t0 < 20; i++) {
+      const id = ids[i]
+      const e = (JSON.parse(core.entriesJson([id])) as EntryMeta[])[0]
+      if (!e || 'deleted' in e || e.purged || e.kind !== 'markdown' || e.blob) {
+        index.remove(id)
+        continue
+      }
+      const text = await docText(id)
+      batch.push({ id, name: e.name.replace(/\.md$/i, ''), text, ex: JSON.parse(extract(text)) as Extracted })
     }
-    const text = await docText(id)
-    const ex = JSON.parse(extract(text)) as Extracted
-    await index.upsert(id, e.name.replace(/\.md$/i, ''), text, ex)
+    if (batch.length) await index.upsertMany(batch)
+    if (i < ids.length) await new Promise((r) => setTimeout(r, 0))
   }
   // Panels showing index-derived data (backlinks, tags) refresh on this.
   post({ ev: 'indexed' })
@@ -911,15 +956,22 @@ const methods: Record<string, (...a: never[]) => unknown> = {
   async init(t: string | null, b: string, replicaHint?: string) {
     token = t
     base = b
+    const T = [performance.now()]
     await init()
     db = await openDb()
     const [keys, vals] = await loadAll(db)
+    T.push(performance.now())
     core = new Core(keys, vals, replicaHint ?? randomHex(7), CHUNK)
+    T.push(performance.now())
     await commit(db, core.take_init_writes() as Write[])
     await replayJournal()
     connect()
     setTimeout(() => void ensureIndex(), 1500)
-    const r: InitResult = { entries: JSON.parse(core.viewJson()), status: status(), replica: core.replica, vaultId: core.vaultId ?? null }
+    const vj = core.viewJson()
+    T.push(performance.now())
+    const r: InitResult = { entries: JSON.parse(vj), status: status(), replica: core.replica, vaultId: core.vaultId ?? null }
+    T.push(performance.now())
+    console.log(`INITT load ${(T[1] - T[0]).toFixed(0)} core ${(T[2] - T[1]).toFixed(0)} viewJson ${(T[3] - T[2]).toFixed(0)} parse ${(T[4] - T[3]).toFixed(0)}`)
     return r
   },
   setToken(t: string | null) {

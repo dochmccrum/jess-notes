@@ -50,6 +50,7 @@ provides. The mirror can always be rebuilt (`jess rebuild-mirror`).
    | `JESS_GIT_REMOTE` | – | e.g. `git@github.com:you/notes-backup.git`. The mirror is committed every minute and pushed here. |
    | `JESS_GIT_INCLUDE_ATTACHMENTS` | `false` | Commit attachments too (large!). `JESS_GIT_LFS=true` stores them with Git LFS. |
    | `JESS_MIRROR_ENABLED` / `JESS_GIT_ENABLED` | `true` | Turn the plain-files mirror / local git history off. |
+   | `JESS_DERIVE` | `true` | `false` stops the background thumbnails and PDF text (images then show at full size, PDFs aren't searchable). |
    | `JESS_MAX_UPLOAD_MB` | `2048` | Largest single attachment. |
    | `JESS_SNAPSHOT_INTERVAL_HOURS` / `JESS_SNAPSHOT_RETENTION_DAYS` | `6` / `14` | Database snapshots. |
    | `JESS_TRASH_RETENTION_DAYS` | `30` | Trash is emptied after this. |
@@ -102,6 +103,15 @@ and imported in batches, so a multi-GB vault is fine.
 
 For automation there is also an admin API (`POST /api/admin/import` with a zip already uploaded
 as a blob), described in `docs/PROTOCOL.md`.
+
+A vault already on the server's disk can be imported there, with the same planner, while the
+server is stopped (about 15 s for 10k notes and 20k images):
+
+```sh
+jess import /path/to/vault --dry-run    # the report only
+jess import /path/to/vault              # or a .zip; --conflict skip|overwrite|keep_both
+jess derive-all                         # optional: thumbnails and PDF text now, not in the background
+```
 
 What is imported: every note byte-for-byte (including line endings and BOMs), folders (empty
 ones too), PDFs, images and other files, plus the vault's attachment settings from

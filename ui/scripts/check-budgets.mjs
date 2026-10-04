@@ -46,6 +46,11 @@ for (const [g, size] of Object.entries(groups)) {
   if (over && enforced) failed = true
   console.log(`${g.padEnd(12)} ${(size / 1024).toFixed(1).padStart(7)} KB / ${limit ? (limit / 1024).toFixed(0) : '-'} KB ${over ? (enforced ? 'OVER BUDGET' : '(over, tracked)') : 'ok'}`)
 }
+// Benchmark results (scripts/bench.sh): one line per group.
+if (process.env.BENCH_OUT) {
+  const { appendFileSync } = await import('node:fs')
+  for (const [g, size] of Object.entries(groups)) appendFileSync(process.env.BENCH_OUT, JSON.stringify({ key: `bundle_${g.replace('+', '_')}_kb`, value: Math.round(size / 102.4) / 10, unit: 'KB' }) + '\n')
+}
 if (failed) {
   console.error('bundle budget exceeded')
   process.exit(1)

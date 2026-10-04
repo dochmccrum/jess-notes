@@ -114,7 +114,9 @@ export function createEditor(parent: HTMLElement, o: EditorOptions): EditorView 
       markdownSupport(),
       syntaxHighlighting(highlight),
       livePreview(o.links),
-      autocompletion({ override: [wikilinkSource(o.store, () => o.entryId)], icons: false, interactionDelay: 0 }),
+      // No typing delay (default 100 ms): the link source is synchronous and a few ms at 30k names
+      // (DESIGN §18: query → results <30 ms); outside `[[` it returns at once.
+      autocompletion({ override: [wikilinkSource(o.store, () => o.entryId)], icons: false, interactionDelay: 0, activateOnTypingDelay: 0 }),
       crlfNewline(dominantCRLF(text)),
       keymap.of([...closeBracketsKeymap, ...completionKeymap, ...yUndoManagerKeymap, ...searchKeymap, ...defaultKeymap, indentWithTab]),
       yCollab(ytext, null, { undoManager: undo }),

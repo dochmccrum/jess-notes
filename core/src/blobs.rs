@@ -10,7 +10,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub const CHUNK_SIZE: u64 = 4 << 20;
 pub const MAX_UPLOADS: usize = 2;
 pub const CHUNKS_PER_UPLOAD: usize = 2;
-pub const MAX_DOWNLOAD_RANGES: usize = 4;
+/// Downloads in flight: up to this many ranged requests, and at most `MAX_DOWNLOAD_BYTES` of them
+/// (4 full chunks). Large files run 4 chunks at a time; small attachments 16 at a time, which a
+/// count of 4 starved (~4 small images per round trip).
+pub const MAX_DOWNLOAD_RANGES: usize = 16;
+pub const MAX_DOWNLOAD_BYTES: u64 = 4 * CHUNK_SIZE;
 
 /// Download priorities (§7.4). Lower is more urgent.
 pub const P0_OPEN: u8 = 0;
@@ -482,8 +486,20 @@ impl BlobManager {
             .collect();
         q.sort();
         let mut in_flight: usize = self.in_flight_ranges.values().map(|s| s.len()).sum();
+        let chunk = self.chunk;
+        let range_len = |size: u64, i: u32| (size - i as u64 * chunk).min(chunk);
+        let mut in_flight_bytes: u64 = self
+            .in_flight_ranges
+            .iter()
+            .map(|(h, s)| {
+                let size = self.downloads.get(h).map(|d| d.1).unwrap_or(chunk);
+                s.iter()
+                    .map(|&i| range_len(size.max(i as u64 * chunk + 1), i))
+                    .sum::<u64>()
+            })
+            .sum();
         for (_, h, size) in q {
-            if in_flight >= MAX_DOWNLOAD_RANGES {
+            if in_flight >= MAX_DOWNLOAD_RANGES || in_flight_bytes >= MAX_DOWNLOAD_BYTES {
                 break;
             }
             if self.parked.contains(&h) {
@@ -497,7 +513,7 @@ impl BlobManager {
                 .unwrap_or_default();
             let fl = self.in_flight_ranges.entry(h).or_default();
             for i in 0..n {
-                if in_flight >= MAX_DOWNLOAD_RANGES {
+                if in_flight >= MAX_DOWNLOAD_RANGES || in_flight_bytes >= MAX_DOWNLOAD_BYTES {
                     break;
                 }
                 if have.get(i) || fl.contains(&i) {
@@ -505,6 +521,7 @@ impl BlobManager {
                 }
                 fl.insert(i);
                 in_flight += 1;
+                in_flight_bytes += range_len(size, i);
                 let offset = i as u64 * self.chunk;
                 out.push(BlobTask::GetRange {
                     hash: h,
@@ -769,6 +786,25 @@ mod tests {
         assert!(t
             .iter()
             .all(|t| matches!(t, BlobTask::GetRange { len, .. } if *len > 0)));
+    }
+
+    #[test]
+    fn download_concurrency_by_count_and_bytes() {
+        let mut m = BlobManager::new(CHUNK_SIZE);
+        for i in 0..40 {
+            m.want(h(i), 50_000, P3_PREFETCH, 0);
+        }
+        assert_eq!(
+            m.next_tasks().len(),
+            MAX_DOWNLOAD_RANGES,
+            "small files: by count"
+        );
+        let mut m = BlobManager::new(CHUNK_SIZE);
+        for i in 0..10 {
+            m.want(h(i), 3 * CHUNK_SIZE, P3_PREFETCH, 0);
+        }
+        assert_eq!(m.next_tasks().len(), 4, "full chunks: by bytes");
+        assert!(m.next_tasks().is_empty());
     }
 
     #[test]

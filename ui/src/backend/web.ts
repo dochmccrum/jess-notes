@@ -78,22 +78,50 @@ export class WebBackend implements Backend {
     return this.call<{ ok: boolean; error?: string }>('intent', JSON.stringify(ops))
   }
 
+  /** The last-open note's state from the boot record (DESIGN §11.7): its first `openDoc` shows
+   *  it at once, before the worker has loaded the vault. */
+  private boot: { id: string; state: Uint8Array } | null = null
+  preload(id: string, state: Uint8Array) {
+    this.boot = { id, state }
+  }
+
+  /** The open note's state, for the boot record (null if it isn't open). */
+  docState(id: string): Uint8Array | null {
+    const d = this.docs.get(id)?.values().next().value
+    return d ? Y.encodeStateAsUpdate(d) : null
+  }
+
   async openDoc(id: string): Promise<DocSession> {
     const ydoc = new Y.Doc()
     let set = this.docs.get(id)
     if (!set) this.docs.set(id, (set = new Set()))
     set.add(ydoc)
-    const updates = await this.call<Uint8Array[]>('openDoc', id)
-    Y.transact(ydoc, () => {
-      for (const u of updates) Y.applyUpdate(ydoc, u, 'remote')
-    }, 'remote')
+    const boot = this.boot?.id === id ? this.boot.state : null
+    this.boot = null
+    const loaded = this.call<Uint8Array[]>('openDoc', id).then((updates) => {
+      if (ydoc.isDestroyed) return
+      Y.transact(ydoc, () => {
+        for (const u of updates) Y.applyUpdate(ydoc, u, 'remote')
+      }, 'remote')
+      if (!boot) return
+      // Whatever the boot state has that the worker's rows don't (normally nothing) goes to the
+      // worker like an edit, so nothing shown can be lost.
+      const sv = updates.length ? Y.encodeStateVectorFromUpdate(Y.mergeUpdates(updates)) : new Uint8Array([0])
+      const missing = Y.encodeStateAsUpdate(ydoc, sv)
+      const d = Y.decodeUpdate(missing)
+      if (d.structs.length || d.ds.clients.size) onUpdate(missing, 'boot-diff')
+    })
     const onUpdate = (u: Uint8Array, origin: unknown) => {
-      if (origin === 'remote') return
+      if (origin === 'remote' || origin === 'boot') return
       this.sentUpdates++
       this.worker.postMessage({ id: 0, method: 'docUpdate', args: [id, u] })
       this.sync.set(this.honest(this.workerStatus))
     }
     ydoc.on('update', onUpdate)
+    if (boot) {
+      Y.applyUpdate(ydoc, boot, 'boot')
+      loaded.catch((e) => console.error('jess: opening the note failed', e))
+    } else await loaded
     return {
       id,
       ydoc,

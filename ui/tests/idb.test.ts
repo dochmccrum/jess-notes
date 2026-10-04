@@ -78,3 +78,18 @@ it('one shared connection, which gives way to an upgrade or delete and is then r
   b2.close()
   expect(await openDb('jess-conn-test')).not.toBe(b2)
 })
+
+it('loadAll: every key, but no note text values (core only needs their keys)', async () => {
+  const db = await openDb('jess-loadall-test')
+  await commit(db, [
+    [b(0x65, 1), b(1)],
+    [b(0x75, 1, 2), b(9, 9, 9)],
+    [b(0x75, 3), b(8)],
+    [b(0x79, 1), b(2)],
+    [b(0x6d, 7), b(3)],
+  ])
+  const [keys, vals] = await loadAll(db)
+  expect(keys.map((k) => [...k])).toEqual([[0x65, 1], [0x6d, 7], [0x75, 1, 2], [0x75, 3], [0x79, 1]])
+  expect(vals.map((v) => [...v])).toEqual([[1], [3], [], [], [2]])
+  db.close()
+})

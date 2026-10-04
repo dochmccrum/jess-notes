@@ -68,11 +68,28 @@ function done(tx: IDBTransaction): Promise<void> {
 }
 
 /** Loads the whole KV store (keys and values in key order). */
+/** Note text rows (`u` prefix, core::kv::P_DOC): core only indexes their keys at load, and the
+ *  worker reads a note's rows when it is opened, so their values (most of the store) aren't read. */
+const DOC_PREFIX = 0x75
+
+/** Every key, with every value except note text rows' (empty there). */
 export async function loadAll(db: IDBDatabase): Promise<[Uint8Array[], Uint8Array[]]> {
   const tx = db.transaction('kv', 'readonly')
   const s = tx.objectStore('kv')
-  const [keys, vals] = await Promise.all([req(s.getAllKeys()), req(s.getAll())])
-  return [keys.map((k) => new Uint8Array(k as ArrayBuffer)), vals.map((v) => new Uint8Array(v as ArrayBuffer))]
+  const docs = new Uint8Array([DOC_PREFIX]).buffer
+  const after = new Uint8Array([DOC_PREFIX + 1]).buffer
+  const [keys, lo, hi] = await Promise.all([req(s.getAllKeys()), req(s.getAll(IDBKeyRange.upperBound(docs, true))), req(s.getAll(IDBKeyRange.lowerBound(after)))])
+  const empty = new Uint8Array(0)
+  const vals: Uint8Array[] = []
+  let i = 0
+  let j = 0
+  const ks = keys.map((k) => new Uint8Array(k as ArrayBuffer))
+  for (const k of ks) {
+    if (k[0] === DOC_PREFIX) vals.push(empty)
+    else if (k[0] < DOC_PREFIX || k.length === 0) vals.push(new Uint8Array(lo[i++] as ArrayBuffer))
+    else vals.push(new Uint8Array(hi[j++] as ArrayBuffer))
+  }
+  return [ks, vals]
 }
 
 export type Write = [Uint8Array, Uint8Array | null]
@@ -136,6 +153,15 @@ const chunkKey = (hash: string, i: number) => `${hash}:${String(i).padStart(8, '
 export async function putChunk(db: IDBDatabase, hash: string, index: number, bytes: Uint8Array): Promise<void> {
   const tx = db.transaction('blobchunks', 'readwrite')
   tx.objectStore('blobchunks').put(toKey(bytes), chunkKey(hash, index))
+  await done(tx)
+}
+
+/** Several chunks in one transaction (a download round's small attachments). */
+export async function putChunks(db: IDBDatabase, chunks: { hash: string; index: number; bytes: Uint8Array }[]): Promise<void> {
+  if (!chunks.length) return
+  const tx = db.transaction('blobchunks', 'readwrite')
+  const st = tx.objectStore('blobchunks')
+  for (const c of chunks) st.put(toKey(c.bytes), chunkKey(c.hash, c.index))
   await done(tx)
 }
 

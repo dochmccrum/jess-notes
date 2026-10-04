@@ -87,17 +87,19 @@ impl BlobFs {
     }
 
     fn install(&self, tmp: &Path, h: &Hash) -> io::Result<()> {
+        self.install_with(tmp, h, self.durable)
+    }
+
+    fn install_with(&self, tmp: &Path, h: &Hash, durable: bool) -> io::Result<()> {
         let dest = self.path(h);
         let dir = dest.parent().expect("has parent");
         fs::create_dir_all(dir)?;
-        let f = File::open(tmp)?;
-        if self.durable {
-            f.sync_all()?;
+        if durable {
+            File::open(tmp)?.sync_all()?;
         }
-        drop(f);
         fs::set_permissions(tmp, fs::Permissions::from_mode(0o444))?;
         fs::rename(tmp, &dest)?;
-        if self.durable {
+        if durable {
             fsync_dir(dir)?;
         }
         Ok(())
@@ -119,6 +121,36 @@ impl BlobFs {
 
     /// Stores a file by streaming it (hashing on the way).
     pub fn put_reader(&self, r: &mut impl Read, tag: &str) -> io::Result<(Hash, u64)> {
+        self.put_reader_with(r, tag, self.durable)
+    }
+
+    /// Like `put_reader` but without fsyncs: the caller must call `sync()` before it records the
+    /// blob as present (batched server-side import: one filesystem sync per batch instead of a
+    /// file and a directory fsync per blob).
+    pub fn put_reader_unsynced(&self, r: &mut impl Read, tag: &str) -> io::Result<(Hash, u64)> {
+        self.put_reader_with(r, tag, false)
+    }
+
+    /// Makes every file written and renamed under the blob root durable (`syncfs`).
+    pub fn sync(&self) -> io::Result<()> {
+        if !self.durable {
+            return Ok(());
+        }
+        use std::os::fd::AsRawFd;
+        let d = File::open(&self.root)?;
+        // SAFETY: a valid open descriptor for the duration of the call.
+        if unsafe { libc::syncfs(d.as_raw_fd()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    fn put_reader_with(
+        &self,
+        r: &mut impl Read,
+        tag: &str,
+        durable: bool,
+    ) -> io::Result<(Hash, u64)> {
         let tmp = self.root.join(".tmp").join(format!("in-{tag}"));
         let mut f = File::create(&tmp)?;
         let mut hasher = Sha256::new();
@@ -138,7 +170,7 @@ impl BlobFs {
         if self.exists(&h) {
             fs::remove_file(&tmp)?;
         } else {
-            self.install(&tmp, &h)?;
+            self.install_with(&tmp, &h, durable)?;
         }
         Ok((h, n))
     }

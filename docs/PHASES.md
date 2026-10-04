@@ -113,7 +113,14 @@ Exit criteria: `cargo test --workspace` green, sim 10k seeds green, crash tests 
 - [ ] Possible later: show-and-scan pairing between two phones; an in-place space switch instead of a restart.
 
 ## Phase 7 — performance + polish
-- [ ] `tools/vaultgen` seeded generator; all benchmarks in DESIGN §18 wired to CI with thresholds; fix regressions; polish.
+- [x] `tools/vaultgen` seeded generator; all benchmarks in DESIGN §18 wired to CI with thresholds (`scripts/bench.sh`, `bench/thresholds.json`, CI job `bench`; DESIGN §22 items 63–76); fix regressions; polish. At 10k notes + 20k attachments, the run found and fixed:
+  - cold start 1.8 s → ~0.18 s (the boot record now carries the open note, as §11.7 says);
+  - server import 10+ min → 15 s;
+  - attachment download 0.8 → 10+ MB/s (Nagle, IndexedDB batching, index slices);
+  - the 100 MB scan read in full before its first page (a PDF.js shortcut for flat page trees);
+  - search and autocomplete 100+ ms → ~20 ms;
+  - the quick switcher ranking the exact name below path matches;
+  - an offline spell switching the device to long-polling for good.
 - [ ] Android cold start on a real mid-range phone, release build (target <500 ms launch → note visible; pre-warming / native splash if missed). Emulator debug build: 0.87–1.6 s.
 - [ ] Native binary size: ~20 MB per Android ABI (LTO, `codegen-units = 1`, stripping; affects server and Linux builds too).
 - [ ] Opening a note with 50 images takes 110–130 ms in Chromium on GitHub's runners (WebKit 40–60 ms there, 15–30 ms locally). The e2e check allows 200 ms on CI until this is understood.

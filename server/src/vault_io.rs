@@ -98,6 +98,8 @@ pub struct ServerSink<'a, E: EngineAccess> {
     counter: u64,
     seed: u64,
     pub rejected: Vec<String>,
+    /// Blob files written but not yet synced and recorded (see `flush_blobs`).
+    pending: Vec<(Hash, u64)>,
 }
 
 impl<'a, E: EngineAccess> ServerSink<'a, E> {
@@ -109,7 +111,22 @@ impl<'a, E: EngineAccess> ServerSink<'a, E> {
             counter: 0,
             seed,
             rejected: vec![],
+            pending: vec![],
         }
+    }
+
+    /// One filesystem sync, then one transaction marks the batch's blobs present: a blob is
+    /// recorded only once its file is durable (DESIGN §7.1), without an fsync per file.
+    fn flush_blobs(&mut self) -> io::Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        self.fs.sync()?;
+        let blobs = std::mem::take(&mut self.pending);
+        let now = self.now;
+        self.engine
+            .with(move |e| e.blobs_stored(&blobs, None, now).map_err(|e| e.to_string()))
+            .map_err(io::Error::other)
     }
 }
 
@@ -146,6 +163,7 @@ impl<E: EngineAccess> ImportSink for ServerSink<'_, E> {
     }
 
     fn meta(&mut self, ops: Vec<MetaOp>) -> io::Result<()> {
+        self.flush_blobs()?;
         let now = self.now;
         let n = ops.len();
         let res = self
@@ -161,30 +179,42 @@ impl<E: EngineAccess> ImportSink for ServerSink<'_, E> {
     }
 
     fn doc(&mut self, entry: Id, text: &str, existing: bool) -> io::Result<()> {
+        self.docs(vec![(entry, text.to_string(), existing)])
+    }
+
+    fn docs(&mut self, docs: Vec<(Id, String, bool)>) -> io::Result<()> {
+        self.flush_blobs()?;
         let now = self.now;
-        let text = text.to_string();
         let seed = self.seed ^ self.counter;
         self.engine
             .with(move |e| -> Result<(), String> {
-                let d = if existing {
-                    ydoc::from_updates(
-                        seed & 0xffff_ffff | 1,
-                        &e.doc_rows(entry, SLOT_BODY).map_err(|e| e.to_string())?,
-                    )
-                    .map_err(|_| "bad doc".to_string())?
-                } else {
-                    ydoc::new_doc(seed & 0xffff_ffff | 1)
-                };
-                let u = if existing {
-                    ydoc::set_text(&d, &text)
-                } else {
-                    ydoc::insert(&d, 0, &text)
-                };
-                e.server_doc(entry, SLOT_BODY, &u, now)
-                    .map_err(|e| e.to_string())?;
+                let mut edits = Vec::with_capacity(docs.len());
+                for (i, (entry, text, existing)) in docs.into_iter().enumerate() {
+                    let client = (seed.wrapping_add(i as u64)) & 0xffff_ffff | 1;
+                    let d = if existing {
+                        ydoc::from_updates(
+                            client,
+                            &e.doc_rows(entry, SLOT_BODY).map_err(|e| e.to_string())?,
+                        )
+                        .map_err(|_| "bad doc".to_string())?
+                    } else {
+                        ydoc::new_doc(client)
+                    };
+                    let u = if existing {
+                        ydoc::set_text(&d, &text)
+                    } else {
+                        ydoc::insert(&d, 0, &text)
+                    };
+                    edits.push((entry, SLOT_BODY.to_string(), u));
+                }
+                e.server_docs(edits, now).map_err(|e| e.to_string())?;
                 Ok(())
             })
             .map_err(io::Error::other)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_blobs()
     }
 
     fn blob(&mut self, name: &str, r: &mut dyn Read, size: u64) -> io::Result<(Hash, BlobInfo)> {
@@ -194,16 +224,13 @@ impl<E: EngineAccess> ImportSink for ServerSink<'_, E> {
         };
         let tag = format!("{}-{}", self.seed, self.counter);
         self.counter += 1;
-        let (h, n) = self.fs.put_reader(&mut hr, &tag)?;
+        let (h, n) = self.fs.put_reader_unsynced(&mut hr, &tag)?;
         if n != size {
             return Err(io::Error::other(format!(
                 "{name}: size changed while importing"
             )));
         }
-        let now = self.now;
-        self.engine
-            .with(move |e| e.blob_stored(h, n, None, now).map_err(|e| e.to_string()))
-            .map_err(io::Error::other)?;
+        self.pending.push((h, n));
         Ok((h, blob_info_from_header(name, &hr.head, n)))
     }
 }

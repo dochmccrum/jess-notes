@@ -15,7 +15,7 @@ export interface IndexedLink {
 }
 
 /** Bump to rebuild the index from scratch (it is derived data). */
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS tags(src TEXT NOT NULL, name TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tags_src ON tags(src);
 CREATE INDEX IF NOT EXISTS tags_name ON tags(name);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(id UNINDEXED, page UNINDEXED, name, body, tokenize = 'unicode61 remove_diacritics 2');
+CREATE TABLE IF NOT EXISTS fts_ids(rid INTEGER PRIMARY KEY, id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS fts_ids_id ON fts_ids(id);
 `
 
 export function targetKey(target: string): string {
@@ -50,27 +52,56 @@ export class SearchIndex {
     const sqlite3: any = await (init as any)({ print: () => {}, printErr: () => {} })
     let db: DB
     let persistent = false
+    let pool: any = null
     try {
-      const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'jess-index' })
+      pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'jess-index' })
       db = new pool.OpfsSAHPoolDb('/index.db')
       persistent = true
     } catch {
       db = new sqlite3.oo1.DB(':memory:')
     }
+    // Derived data: no fsync (a power cut can at worst cost a rebuild; the rollback journal still
+    // keeps each transaction atomic if the browser dies), and a cache big enough that a batch's
+    // pages are written once at commit instead of spilling and being rewritten mid-transaction.
+    const tune = (d: DB) => d.exec('PRAGMA journal_mode = TRUNCATE; PRAGMA synchronous = OFF; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32768')
     let version = 0
     try {
-      version = Number(db.selectValue("SELECT v FROM meta WHERE k = 'schema'") ?? 0)
-    } catch {
-      /* no meta table: an old index */
+      tune(db)
+      try {
+        version = Number(db.selectValue("SELECT v FROM meta WHERE k = 'schema'") ?? 0)
+      } catch {
+        /* no meta table: an old index */
+      }
+      if (version !== SCHEMA_VERSION) {
+        for (const t of ['fts', 'fts_ids', 'links', 'tags', 'notes', 'pdfs', 'meta']) db.exec(`DROP TABLE IF EXISTS ${t}`)
+      }
+      db.exec(SCHEMA)
+    } catch (e) {
+      // Unreadable (e.g. corrupt after a power cut): start again from an empty index.
+      if (!pool) throw e
+      console.warn('jess: rebuilding the search index', e)
+      db.close()
+      pool.unlink('/index.db')
+      db = new pool.OpfsSAHPoolDb('/index.db')
+      tune(db)
+      db.exec(SCHEMA)
     }
-    if (version !== SCHEMA_VERSION) {
-      for (const t of ['fts', 'links', 'tags', 'notes', 'pdfs', 'meta']) db.exec(`DROP TABLE IF EXISTS ${t}`)
-    }
-    db.exec(SCHEMA)
     db.exec({ sql: "INSERT OR REPLACE INTO meta(k, v) VALUES ('schema', ?)", bind: [String(SCHEMA_VERSION)] })
     const ix = new SearchIndex(db)
     ix.persistent = persistent
     return ix
+  }
+
+  // The FTS rows of an id are found through `fts_ids` (rowid → id, indexed by id): FTS5 can't
+  // index its UNINDEXED `id` column, so deleting by it scanned the whole table.
+  private ftsDelete(id: string) {
+    this.db.exec({ sql: 'DELETE FROM fts WHERE rowid IN (SELECT rid FROM fts_ids WHERE id = ?)', bind: [id] })
+    this.db.exec({ sql: 'DELETE FROM fts_ids WHERE id = ?', bind: [id] })
+  }
+
+  private ftsInsert(id: string, page: number | null, name: string, body: string) {
+    this.db.exec({ sql: 'INSERT INTO fts(id, page, name, body) VALUES (?, ?, ?, ?)', bind: [id, page, name, body] })
+    this.db.exec({ sql: 'INSERT INTO fts_ids(rid, id) VALUES (last_insert_rowid(), ?)', bind: [id] })
   }
 
   private rows(sql: string, bind: unknown[] = []): any[] {
@@ -83,22 +114,32 @@ export class SearchIndex {
 
   /** Re-indexes one note. Returns false if its text hasn't changed. */
   async upsert(id: string, name: string, text: string, ex: Extracted, force = false): Promise<boolean> {
-    const h = await hashText(name + '\u0000' + text)
-    const cur = this.rows('SELECT hash FROM notes WHERE id = ?', [id])[0]
-    if (!force && cur?.hash === h) return false
+    return (await this.upsertMany([{ id, name, text, ex }], force)) > 0
+  }
+
+  /** Re-indexes notes in one transaction (one journal write and sync for the lot, not one per
+   *  note: indexing a 10k-note vault one transaction at a time kept the worker busy with OPFS
+   *  writes for minutes). Returns how many changed. */
+  async upsertMany(notes: { id: string; name: string; text: string; ex: Extracted }[], force = false): Promise<number> {
+    const hashes = await Promise.all(notes.map((n) => hashText(n.name + '\u0000' + n.text)))
+    const changed = notes.filter((n, i) => force || this.rows('SELECT hash FROM notes WHERE id = ?', [n.id])[0]?.hash !== hashes[i])
+    if (!changed.length) return 0
+    const hashOf = new Map(notes.map((n, i) => [n.id, hashes[i]]))
     this.db.transaction(() => {
-      this.db.exec({ sql: 'DELETE FROM links WHERE src = ?', bind: [id] })
-      this.db.exec({ sql: 'DELETE FROM tags WHERE src = ?', bind: [id] })
-      this.db.exec({ sql: 'DELETE FROM fts WHERE id = ?', bind: [id] })
-      ex.links.forEach((l, i) => {
-        if (!l.target.trim()) return
-        this.db.exec({ sql: 'INSERT INTO links(src, ord, target, tkey, markdown, embed) VALUES (?,?,?,?,?,?)', bind: [id, i, l.target, targetKey(l.target), l.syntax === 'markdown' ? 1 : 0, l.embed ? 1 : 0] })
-      })
-      for (const t of new Set(ex.tags.map((t) => t.name.toLowerCase()))) this.db.exec({ sql: 'INSERT INTO tags(src, name) VALUES (?, ?)', bind: [id, t] })
-      this.db.exec({ sql: 'INSERT INTO fts(id, page, name, body) VALUES (?, NULL, ?, ?)', bind: [id, name, text] })
-      this.db.exec({ sql: 'INSERT OR REPLACE INTO notes(id, hash) VALUES (?, ?)', bind: [id, h] })
+      for (const { id, name, text, ex } of changed) {
+        this.db.exec({ sql: 'DELETE FROM links WHERE src = ?', bind: [id] })
+        this.db.exec({ sql: 'DELETE FROM tags WHERE src = ?', bind: [id] })
+        this.ftsDelete(id)
+        ex.links.forEach((l, i) => {
+          if (!l.target.trim()) return
+          this.db.exec({ sql: 'INSERT INTO links(src, ord, target, tkey, markdown, embed) VALUES (?,?,?,?,?,?)', bind: [id, i, l.target, targetKey(l.target), l.syntax === 'markdown' ? 1 : 0, l.embed ? 1 : 0] })
+        })
+        for (const t of new Set(ex.tags.map((t) => t.name.toLowerCase()))) this.db.exec({ sql: 'INSERT INTO tags(src, name) VALUES (?, ?)', bind: [id, t] })
+        this.ftsInsert(id, null, name, text)
+        this.db.exec({ sql: 'INSERT OR REPLACE INTO notes(id, hash) VALUES (?, ?)', bind: [id, hashOf.get(id)] })
+      }
     })
-    return true
+    return changed.length
   }
 
   /** The blob whose text is indexed for each PDF entry. */
@@ -106,14 +147,14 @@ export class SearchIndex {
     return new Map(this.rows('SELECT id, blob FROM pdfs').map((r) => [r.id, r.blob]))
   }
 
-  /** Indexes a PDF's text, one row per page (DESIGN §8: server-extracted). */
-  upsertPdf(id: string, name: string, blob: string, pages: string[]) {
+  /** Indexes a PDF's text, one row per page (DESIGN §8: server-extracted), pages `from`..`to` in
+   *  one transaction, so a long PDF can be indexed in slices. The first slice drops the old rows;
+   *  the last records which blob is indexed (until then the PDF counts as not indexed). */
+  upsertPdf(id: string, name: string, blob: string, pages: string[], from = 0, to = pages.length) {
     this.db.transaction(() => {
-      this.db.exec({ sql: 'DELETE FROM fts WHERE id = ?', bind: [id] })
-      pages.forEach((text, i) => {
-        if (text.trim()) this.db.exec({ sql: 'INSERT INTO fts(id, page, name, body) VALUES (?, ?, ?, ?)', bind: [id, i + 1, name, text] })
-      })
-      this.db.exec({ sql: 'INSERT OR REPLACE INTO pdfs(id, blob) VALUES (?, ?)', bind: [id, blob] })
+      if (from === 0) this.ftsDelete(id)
+      for (let i = from; i < to; i++) if (pages[i].trim()) this.ftsInsert(id, i + 1, name, pages[i])
+      if (to >= pages.length) this.db.exec({ sql: 'INSERT OR REPLACE INTO pdfs(id, blob) VALUES (?, ?)', bind: [id, blob] })
     })
   }
 
@@ -121,7 +162,7 @@ export class SearchIndex {
     this.db.transaction(() => {
       this.db.exec({ sql: 'DELETE FROM pdfs WHERE id = ?', bind: [id] })
       for (const t of ['links', 'tags']) this.db.exec({ sql: `DELETE FROM ${t} WHERE src = ?`, bind: [id] })
-      this.db.exec({ sql: 'DELETE FROM fts WHERE id = ?', bind: [id] })
+      this.ftsDelete(id)
       this.db.exec({ sql: 'DELETE FROM notes WHERE id = ?', bind: [id] })
     })
   }
@@ -165,6 +206,6 @@ export class SearchIndex {
   }
 
   clear() {
-    this.db.exec('DELETE FROM notes; DELETE FROM pdfs; DELETE FROM links; DELETE FROM tags; DELETE FROM fts;')
+    this.db.exec('DELETE FROM notes; DELETE FROM pdfs; DELETE FROM links; DELETE FROM tags; DELETE FROM fts; DELETE FROM fts_ids;')
   }
 }

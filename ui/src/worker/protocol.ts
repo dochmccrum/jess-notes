@@ -12,6 +12,8 @@ export type WorkerEvent =
   | { ev: 'rejected'; opId: number; reason: string }
   | { ev: 'progress'; task: string; done: number; total: number; label?: string }
   | { ev: 'indexed' }
+  /** The search index has caught up with the vault after start (tests and smoke tests). */
+  | { ev: 'indexReady' }
   | { ev: 'quota'; evicted: number }
 
 export interface InitResult {

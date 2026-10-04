@@ -13,6 +13,8 @@
   import { currentSpace, type Space } from './lib/spaces'
 
   let { boot }: { boot: BootRecord | null } = $props()
+  /** The open note's state goes in the boot record up to this size (a 1 MB note is ~1.1 MB). */
+  const BOOT_DOC_MAX = 4 << 20
 
   type Phase = 'gate' | 'blocked' | 'lost' | 'spaces' | 'auth' | 'app'
   let phase: Phase = $state('gate')
@@ -54,6 +56,10 @@
     app = a
     phase = 'app'
     const last = location.hash.startsWith('#/note/') ? null : (boot?.lastNote ?? a.device.lastNote)
+    // The last note opens from the boot record's copy while the worker loads the vault (also when
+    // the URL names it, as after a reload).
+    const first = location.hash.match(/^#\/note\/([^/?#]+)/)?.[1] ?? last
+    if (first && boot?.doc && boot.lastNote === first && backend instanceof WebBackend) backend.preload(first, boot.doc)
     if (last && backend.entries.get(last)) a.open(last)
     try {
       await backend.start()
@@ -67,11 +73,17 @@
 
   function wireLifecycle(a: AppState) {
     // For the Android shell: MainActivity asks `back()` first on the back gesture (DESIGN §11.5).
-    // `entryCount()` is for the device smoke test (catch-up timing).
-    ;(window as unknown as { __jess?: object }).__jess = { back: () => a.back(), entryCount: () => a.entries.entries.size }
+    // `entryCount()` is for the device smoke test (catch-up timing), `indexReady()` for the
+    // benchmarks (the search index has caught up).
+    let indexReady = false
+    a.backend.on((e) => {
+      if (e.ev === 'indexReady') indexReady = true
+    })
+    ;(window as unknown as { __jess?: object }).__jess = { back: () => a.back(), entryCount: () => a.entries.entries.size, indexReady: () => indexReady }
     const saveBoot = () => {
       const snapshot = [...a.entries.entries.values()]
-      void writeBoot({ lastNote: a.active, entries: snapshot, doc: null, at: Date.now() })
+      const doc = a.active ? (a.backend.docState?.(a.active) ?? null) : null
+      void writeBoot({ lastNote: a.active, entries: snapshot, doc: doc && doc.length <= BOOT_DOC_MAX ? doc : null, at: Date.now() })
     }
     document.addEventListener('visibilitychange', () => {
       const fg = document.visibilityState === 'visible'
@@ -93,8 +105,10 @@
       bootTimer = setTimeout(saveBoot, 2000)
     }
     a.backend.entries.subscribe(scheduleBoot)
-    // Opening another note too: pagehide isn't reliable (app windows closing, mobile kills).
+    // Opening another note too: pagehide isn't reliable (app windows closing, mobile kills, and
+    // an IndexedDB write started there may not finish before a reload).
     a.onActiveChange = scheduleBoot
+    scheduleBoot()
     a.backend.on((e) => {
       if (e.ev === 'quota') {
         a.device.offlineAttachments = 'on-demand'

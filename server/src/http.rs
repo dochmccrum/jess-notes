@@ -41,6 +41,8 @@ pub struct App {
     pub started: u64,
     pub status: Mutex<serde_json::Map<String, serde_json::Value>>,
     pub mirror: std::sync::OnceLock<Arc<Mutex<crate::mirror::Mirror>>>,
+    /// Idle read-only connections for request-path reads that must not queue behind the writer.
+    pub readers: Mutex<Vec<rusqlite::Connection>>,
 }
 
 pub type Shared = Arc<App>;
@@ -48,6 +50,32 @@ pub type Shared = Arc<App>;
 impl App {
     pub fn reader(&self) -> rusqlite::Result<rusqlite::Connection> {
         db::open_readonly(&self.cfg.db_path())
+    }
+
+    /// Runs a read on a pooled read-only connection (WAL: it sees the last commit and never waits
+    /// for the writer, whose queue holds fsync'd commits). `None` if the database can't be read.
+    pub async fn read<R: Send + 'static>(
+        self: &Arc<Self>,
+        f: impl FnOnce(&rusqlite::Connection) -> R + Send + 'static,
+    ) -> Option<R> {
+        let app = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let pooled = app.readers.lock().ok().and_then(|mut v| v.pop());
+            let conn = match pooled {
+                Some(c) => c,
+                None => app.reader().ok()?,
+            };
+            let r = f(&conn);
+            if let Ok(mut v) = app.readers.lock() {
+                if v.len() < 8 {
+                    v.push(conn);
+                }
+            }
+            Some(r)
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     pub fn device(&self, headers: &HeaderMap) -> Option<Id> {
@@ -1215,17 +1243,16 @@ async fn blob_get(
         return err(StatusCode::BAD_REQUEST, "bad hash");
     };
     let mime = app
-        .writer
-        .call(move |e| {
-            e.conn
-                .query_row(
-                    "SELECT mime FROM blobs WHERE hash = ?1 AND present = 1",
-                    [h.0.to_vec()],
-                    |r| r.get::<_, Option<String>>(0),
-                )
-                .ok()
+        .read(move |c| {
+            c.query_row(
+                "SELECT mime FROM blobs WHERE hash = ?1 AND present = 1",
+                [h.0.to_vec()],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
         })
-        .await;
+        .await
+        .flatten();
     let Some(mime) = mime else {
         return err(StatusCode::NOT_FOUND, "blob not present");
     };

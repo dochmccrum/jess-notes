@@ -374,7 +374,7 @@ impl Core {
     /// All entries of the optimistic view (JSON array).
     #[wasm_bindgen(js_name = viewJson)]
     pub fn view_json(&self) -> String {
-        serde_json::to_string(&jess_core::json::view(&self.c)).unwrap_or_default()
+        jess_core::json::view_json(&self.c)
     }
 
     #[wasm_bindgen(js_name = entriesJson)]

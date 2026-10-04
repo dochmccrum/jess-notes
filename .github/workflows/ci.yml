@@ -106,6 +106,40 @@ jobs:
           name: playwright-results
           path: ui/test-results
 
+  bench:
+    # DESIGN §18: the generated 10k-note vault, thresholds in bench/thresholds.json.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - name: pdfium (the server derives PDF text and thumbnails)
+        run: |
+          curl -fsSL -o /tmp/p.whl https://files.pythonhosted.org/packages/d3/7c/74a2fb48e5b0d2402d9ca64b39074c722d67e9a8a2c58449a843a8c2329a/pypdfium2-5.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "81df25c1ab4c13ff773102d3cbea1967511d079123b067fc077bd0c4d57d91d8  /tmp/p.whl" | sha256sum -c -
+          unzip -q -j /tmp/p.whl 'pypdfium2_raw/libpdfium.so' -d "$HOME/pdfium"
+          echo "JESS_PDFIUM_LIB=$HOME/pdfium/libpdfium.so" >> "$GITHUB_ENV"
+      - name: wasm-bindgen-cli (must match the wasm-bindgen crate)
+        run: cargo install --locked wasm-bindgen-cli --version 0.2.129
+      - run: sudo apt-get update && sudo apt-get install -y binaryen zip
+      - run: cd ui && pnpm install --frozen-lockfile && pnpm wasm && pnpm build
+      - run: cd ui && pnpm exec playwright install --with-deps chromium
+      - run: scripts/bench.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: |
+            target/bench/results.jsonl
+            ui/test-results
+
   linux-app:
     runs-on: ubuntu-24.04
     env:

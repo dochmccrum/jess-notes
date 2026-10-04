@@ -50,6 +50,7 @@ export type BackendEvent =
   | { ev: 'rejected'; opId: number; reason: string }
   | { ev: 'fatal'; message: string }
   | { ev: 'indexed' }
+  | { ev: 'indexReady' }
   | { ev: 'quota'; evicted: number }
 
 /** Native file access (Tauri): real folder/zip paths instead of browser file lists. */
@@ -69,6 +70,10 @@ export interface Backend {
   start(): Promise<void>
   intent(ops: MetaIntent[]): Promise<{ ok: boolean; error?: string }>
   openDoc(id: string): Promise<DocSession>
+  /** Web: seeds the first `openDoc(id)` with the boot record's state (DESIGN §11.7). */
+  preload?(id: string, state: Uint8Array): void
+  /** Web: the open note's state, for the boot record. */
+  docState?(id: string): Uint8Array | null
   docText(id: string): Promise<string>
   backlinks(id: string): Promise<Backlink[]>
   tags(): Promise<{ name: string; srcs: string[] }[]>

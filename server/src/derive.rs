@@ -382,6 +382,77 @@ fn install(
     rows
 }
 
+/// `jess derive-all`: derives everything pending now, several jobs at a time, offline (the server
+/// must be stopped). For after a large `jess import`; the server's own loop does one job at a time
+/// in the background. Returns (done, failed).
+pub fn derive_all(cfg: &crate::config::Config) -> Result<(u64, u64), String> {
+    if pdfium_library().is_none() {
+        tracing::warn!("pdfium not found: PDFs get no thumbnails or text");
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let fs = crate::blobfs::BlobFs::new(cfg.blobs_dir(), true).map_err(|e| e.to_string())?;
+    let conn = crate::db::open(&cfg.db_path(), true).map_err(|e| e.to_string())?;
+    let parallel = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(1, 8);
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (mut done, mut failed) = (0u64, 0u64);
+    let mut skipped = std::collections::HashSet::new();
+    loop {
+        let batch: Vec<(Hash, Job)> = pending(&conn, 64)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|(h, _)| !skipped.contains(h))
+            .collect();
+        if batch.is_empty() {
+            return Ok((done, failed));
+        }
+        let results = rt.block_on(async {
+            use futures_util::stream::{self, StreamExt};
+            stream::iter(batch)
+                .map(|(h, job)| {
+                    let (exe, data, blob) = (exe.clone(), cfg.data_dir.clone(), fs.path(&h));
+                    async move {
+                        if !blob.is_file() {
+                            return (h, job, None);
+                        }
+                        let rows =
+                            run_job(&exe, &data, &blob, &h, job, Duration::from_secs(120)).await;
+                        (h, job, Some(rows))
+                    }
+                })
+                .buffer_unordered(parallel)
+                .collect::<Vec<_>>()
+                .await
+        });
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for (h, job, rows) in results {
+            let Some(rows) = rows else {
+                skipped.insert(h);
+                continue;
+            };
+            if rows.iter().any(|r| r.1 != "ok") {
+                failed += 1;
+            } else {
+                done += 1;
+            }
+            for (kind, status, size, error) in &rows {
+                tx.execute(
+                    "INSERT OR REPLACE INTO derived(hash, kind, status, version, size, error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![h.0.to_vec(), kind, status, job.version(), size, error],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        eprintln!("{done} derived, {failed} failed");
+    }
+}
+
 /// Background loop: derive whatever is pending, one job at a time, then idle-poll.
 pub fn spawn(app: Shared) {
     tokio::spawn(async move {

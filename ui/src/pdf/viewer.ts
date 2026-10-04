@@ -4,7 +4,8 @@
 // everywhere, canvases + text layers only near the viewport, and at most `maxLive` of them.
 import './stream-iter'
 import { getDocument, GlobalWorkerOptions, PDFDataRangeTransport, TextLayer, type PDFDocumentProxy, type PDFPageProxy, type RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+// PDF.js's worker with one change for flat page trees (scripts/patch-pdfjs.mjs, run by `build`/`dev`).
+import workerUrl from './vendor/pdf.worker.min.mjs?url'
 import type { Backend } from '../backend/types'
 
 import 'pdfjs-dist/web/pdf_viewer.css'
@@ -24,6 +25,8 @@ class BlobTransport extends PDFDataRangeTransport {
     super(src.size, null)
   }
   requestDataRange(begin: number, end: number) {
+    // For the large-PDF benchmark (DESIGN §18: bytes read before the first page).
+    performance.mark('pdf-range', { detail: end - begin })
     this.src.backend.blobRange(this.src.hash, begin, end).then(
       (b) => this.onDataRange(begin, b),
       (e) => this.failed?.(e instanceof Error ? e : new Error(String(e))),

@@ -816,6 +816,8 @@ The seeded generator is `tools/vaultgen --notes 10000 --attachments 20000 --pdfs
 | bundle size | `vite build` + gzip per chunk vs `bench/budgets.json` | main ≤150 KB gz |
 | server | sim-style load: 5 clients typing | apply+commit p99 <20 ms |
 
+The harness, how each metric is measured, and where it departs from the table (typing is held to its target on the main thread, item 71) are in §22 items 63 and 71.
+
 Real mid-range Android numbers come from a documented manual run (a Tauri debug build plus Chrome remote debugging, using the same harness). CI can't reliably provide a device, so the emulator with throttling acts as a regression guard only. CI provider: I'm assuming GitHub Actions (tell me if you'd rather use something else).
 
 ---
@@ -971,7 +973,8 @@ each tightens a rule the simulation showed was underspecified.
 19. **Worker calls wait for `init`.** The UI renders the tree from the IndexedDB boot record before
     the worker is ready; any call (opening a note, typing) that arrives first is queued behind
     `init`, in arrival order. Measured on the dev machine: reload → last note visible ≈ 150 ms;
-    opening a note 7–23 ms.
+    opening a note 7–23 ms. (Since item 69, the last-open note doesn't wait: it opens from the
+    boot record.)
 20. **App keybindings run in the capture phase**, before the editor's own keymap, as in Obsidian:
     a user-bound app shortcut always wins. Commands that act on "the current item" use the tree's
     selection only while the tree has keyboard focus, otherwise the open note.
@@ -1190,6 +1193,120 @@ each tightens a rule the simulation showed was underspecified.
     second, synchronous one. An awaited evaluate that spans the paste's work sometimes failed with
     "Execution context was destroyed", although the page carried on and CDP reported no context
     change.
+63. **The §18 benchmarks.** `tools/vaultgen` writes the vault: notes with links (some with
+    aliases and headings), embeds, tags, maths, frontmatter, callouts, tables and code; a deep
+    folder tree plus a folder of 5,000 notes; PNGs and PDFs; and `Bench/` notes for the
+    benchmarks. It uses its own SplitMix64, so a seed always gives the same bytes. The default
+    vault is about 1.1 GB, generated in about 20 s. `scripts/bench.sh` generates it, imports it
+    with `jess import`, and runs:
+    - the server benchmark (`server/tests/bench.rs`: five clients typing into an fsync'd
+      database on disk);
+    - the bundle sizes;
+    - the browser benchmarks (`ui/bench/`, Playwright Chromium);
+    - `scripts/bench-check.mjs`, which compares the results with `bench/thresholds.json` (the
+      §18 targets plus 10% for noise).
+
+    CI runs it as the `bench` job, and `scripts/ci-local.sh bench` runs it locally. How each
+    metric is measured:
+    - Query → results (switcher, autocomplete, search) and tree expansion: from the input
+      event's timestamp to the first frame painted after the DOM shows the result.
+    - Typing: the p99 main-thread task while typing 200 characters (item 71).
+    - Large PDF: the bytes PDF.js asks for before its first page (`pdf-range` user-timing
+      marks), whether the file is local or remote.
+    - Sync latency and catch-up: timed in the receiving page, so test polling adds nothing.
+    - Import: `jess import` of 5k notes.
+
+    The benchmark device uses a persistent profile on disk: an incognito context keeps
+    IndexedDB in memory with a quota smaller than the vault's attachments. Chrome's IndexedDB
+    also can't open its store when the profile path contains `..`. The server runs with git, the
+    mirror and derivation off (`JESS_DERIVE=false`), as if it were on its own machine: deriving
+    the 20k images' thumbnails takes the server's background loop most of an hour, and
+    `jess derive-all` (in parallel, offline) about 12 minutes here.
+64. **`jess import <folder|zip>`, and a server-side import ~50× faster.** The CLI runs the
+    clients' planner offline (it refuses if a server answers on the port), for a first import
+    on the server. `jess derive-all` then derives thumbnails and PDF text in parallel, instead
+    of leaving them to the server's background loop. Imports used to take one transaction per note text and per attachment, each
+    with an fsync, plus a file and a directory fsync per blob: over 10 minutes for the
+    generated vault. Now, per batch of 250 files:
+    - blob files are written without fsyncs;
+    - one `syncfs` makes them durable;
+    - then one transaction records them, so a blob is still recorded only once its file is
+      durable (§7.1);
+    - and one transaction holds the batch's note texts.
+
+    The 10k notes + 20k images + 300 PDFs import in 12–14 s, and 5k notes in about 2 s.
+65. **`TCP_NODELAY` on the server's sockets** (and the native client's WebSocket). Responses
+    written in more than one segment waited for the client's delayed ACK: 40 ms on Linux, on
+    every request and WebSocket message. Attachment GETs went from 41 ms to under 1 ms.
+66. **Blob GETs read the database on pooled read-only connections**, not on the writer, whose
+    queue holds fsync'd commits.
+67. **Web search index under load.**
+    - Notes are indexed in slices of at most 50 notes or about 20 ms of preparation, one
+      transaction each, yielding in between. One transaction per note kept the worker busy for
+      minutes on a new device's 10k notes, and a big slice made incoming edits wait.
+    - FTS rows are found through `fts_ids` (rowid → id). Deleting by the `UNINDEXED` id column
+      scanned the whole table for every note, so catch-up was quadratic.
+    - The index database runs with `synchronous=OFF`, a 32 MB cache and a `TRUNCATE` journal.
+      It is derived data: a power cut can at worst cost a rebuild, and an index that won't open
+      is deleted and rebuilt. Schema version 3, so it is rebuilt once.
+    - PDF text is indexed 50 pages per transaction.
+68. **Attachment downloads.** In flight: up to 16 ranged requests and at most 16 MiB (4 full
+    chunks), instead of 4 requests, which starved small images. A round's chunks are stored in
+    one IndexedDB transaction. With items 65 and 67, a new desktop device downloads the
+    generated vault's ~1 GB in about 70 s; before, it was over 20 minutes.
+69. **Cold start as §11.7 describes it.**
+    - The boot record carries the open note's Yjs state (up to 4 MB), and that note's editor
+      opens from it at once.
+    - When the worker has loaded, its rows merge into the same Y.Doc (CRDT, so idempotent).
+      Anything only in the boot state is sent to the worker like an edit.
+    - Until now, opening a note waited for the worker's whole init, because the record's `doc`
+      was never filled.
+    - The record is also saved 2 s after start, not only after a change.
+    - The worker loads every key but not note text values: core only indexes their keys, and a
+      note's rows are read when it opens.
+    - The entries view is serialised from typed structs instead of a `serde_json::Value` per
+      entry: 680 → 70 ms at 30k entries.
+
+    Reload → last note visible on the 10k vault: 1.8 s → ~0.18 s.
+70. **PDF.js and flat page trees** (`ui/scripts/patch-pdfjs.mjs`). Before reporting a document,
+    PDF.js loads its last page to check `/Count`. Walking a flat `/Pages` tree to it fetches
+    every page object, and PDF.js also prefetches every kid of the top-level node. Scanners and
+    img2pdf write flat trees with each page object next to its image, so the 100 MB scan was
+    read in full before its first page.
+
+    The build writes a copy of PDF.js's worker with one shortcut: a `/Pages` node with exactly
+    `/Count` kids has only leaves, so page *i* is `Kids[i]`. That kid is checked to be a page;
+    otherwise PDF.js walks the tree as usual. It is a copy, because pnpm hard-links
+    `node_modules` into its store. The script fails if PDF.js changes. First page of the 100 MB
+    scan: 845 → ~110 ms, reading 1.9% of the file.
+71. **Typing latency is measured on the main thread.** Headless Chromium (the old and the new
+    headless mode) presents a frame 1–2 frames after the input, even in a one-line note. Every
+    keystroke's Event Timing duration is 16–32 ms although the app's work is 3–5 ms. So the
+    enforced §18 target (p99 < 16 ms) applies to main-thread tasks while typing, as in the
+    smoothness tests (§23). The Event Timing p99 is tracked. On a real display the 120 Hz
+    acceptance run checks presented frames.
+72. **Quick switcher ranking.** The order is:
+    1. a note named exactly as the query;
+    2. a name that starts with the query;
+    3. a match inside the name;
+    4. a match elsewhere in the path.
+
+    A consecutive run keeps the bonus of the word start where it began, as in fzf. Before,
+    "maths" spread over the word starts of a long path outranked the note called Maths.
+73. **No debounce on search; no typing delay on autocomplete.** Search runs one query at a time
+    and keeps only the latest pending one; the 80 ms debounce is gone. CodeMirror's 100 ms
+    `activateOnTypingDelay` is now 0: the link source is synchronous and a few ms at 30k names.
+    Both now answer in about 20 ms.
+74. **Offline doesn't switch to long-polling.** A WebSocket that never opens counts toward the
+    HTTP fallback (§5.3) only if the server answers `/healthz` over HTTP. Offline, every
+    attempt failed, and three of them switched the device to long-polling for good. Back
+    online, `online()` also cuts short the long-poll loop's backoff sleep (up to 15 s) and
+    tries WebSocket first.
+75. **Remote text is shown before the local commit.** The worker posts other devices' text to
+    open editors before writing it to IndexedDB. The server already has it, and if the device
+    dies first its cursor hasn't moved, so it is pulled again. Edit → other device: ~35–50 ms.
+76. **`indexReady`.** The worker posts it once the search index has caught up after start, and
+    `window.__jess.indexReady()` exposes it. The benchmarks use it to measure in a steady state.
 
 ---
 

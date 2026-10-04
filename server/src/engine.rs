@@ -356,24 +356,34 @@ impl Engine {
 
     /// Server-authored doc edits (import): creates/extends a doc with `update`.
     pub fn server_doc(&mut self, entry: Id, slot: &str, update: &[u8], now: u64) -> Result<u64> {
-        let op = Op {
-            op_id: 1,
-            hlc: self.clock.now(now),
-            known_seq: self.head,
-            group: 0,
-            body: OpBody::Doc {
-                entry,
-                slot: slot.into(),
-                update: update.to_vec(),
-            },
-        };
-        let r = self.run(now, |e, w| {
-            e.push_inner(0, None, std::slice::from_ref(&op), now, w, true)
-        })?;
-        match r.first() {
-            Some((_, AckResult::Applied(s))) => Ok(*s),
-            other => Err(Error::Other(format!("server doc edit failed: {other:?}"))),
-        }
+        let r = self.server_docs(vec![(entry, slot.to_string(), update.to_vec())], now)?;
+        Ok(r[0])
+    }
+
+    /// Several server-authored doc edits in one transaction; returns their seqs.
+    pub fn server_docs(&mut self, edits: Vec<(Id, String, Vec<u8>)>, now: u64) -> Result<Vec<u64>> {
+        let ops: Vec<Op> = edits
+            .into_iter()
+            .enumerate()
+            .map(|(i, (entry, slot, update))| Op {
+                op_id: i as u64 + 1,
+                hlc: self.clock.now(now),
+                known_seq: self.head,
+                group: 0,
+                body: OpBody::Doc {
+                    entry,
+                    slot,
+                    update,
+                },
+            })
+            .collect();
+        let r = self.run(now, |e, w| e.push_inner(0, None, &ops, now, w, true))?;
+        r.into_iter()
+            .map(|(_, a)| match a {
+                AckResult::Applied(s) => Ok(s),
+                other => Err(Error::Other(format!("server doc edit failed: {other:?}"))),
+            })
+            .collect()
     }
 
     fn run(
@@ -1413,15 +1423,30 @@ impl Engine {
         upload_id: Option<&str>,
         now: u64,
     ) -> Result<()> {
+        self.blobs_stored(&[(h, size)], upload_id, now)
+    }
+
+    /// Marks several durable blob files present in one transaction (server-side import).
+    pub fn blobs_stored(
+        &mut self,
+        blobs: &[(Hash, u64)],
+        upload_id: Option<&str>,
+        now: u64,
+    ) -> Result<()> {
+        if blobs.is_empty() {
+            return Ok(());
+        }
         self.begin()?;
         let head0 = self.head;
         let r = (|| -> Result<()> {
-            let seq = self.next_seq();
-            self.conn.execute(
-                "INSERT INTO blobs(hash, size, present, stored_at, seq) VALUES (?1, ?2, 1, ?3, ?4)
-                 ON CONFLICT(hash) DO UPDATE SET size = excluded.size, present = 1, stored_at = excluded.stored_at, seq = excluded.seq",
-                params![h.0.to_vec(), size as i64, now as i64, seq as i64],
-            )?;
+            for (h, size) in blobs {
+                let seq = self.next_seq();
+                self.conn.execute(
+                    "INSERT INTO blobs(hash, size, present, stored_at, seq) VALUES (?1, ?2, 1, ?3, ?4)
+                     ON CONFLICT(hash) DO UPDATE SET size = excluded.size, present = 1, stored_at = excluded.stored_at, seq = excluded.seq",
+                    params![h.0.to_vec(), *size as i64, now as i64, seq as i64],
+                )?;
+            }
             if let Some(u) = upload_id {
                 self.conn
                     .execute("DELETE FROM uploads WHERE upload_id = ?1", [u])?;
